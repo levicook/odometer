@@ -10,18 +10,13 @@ pub(crate) struct Cli {
     pub(crate) command: Commands,
 }
 
-#[derive(Clone, Debug, ValueEnum)]
+#[derive(Clone, Debug, ValueEnum, Default)]
 pub(crate) enum OutputFormat {
     /// Simple human-readable format (default)
+    #[default]
     Simple,
     /// JSON format for scripting
     Json,
-}
-
-impl Default for OutputFormat {
-    fn default() -> Self {
-        OutputFormat::Simple
-    }
 }
 
 #[derive(Subcommand)]
