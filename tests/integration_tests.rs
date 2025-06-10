@@ -12,7 +12,7 @@ mod fixture_tests {
         // Use the ODO_BINARY environment variable set by the Makefile
         let odo_binary = env::var("ODO_BINARY")
             .expect("ODO_BINARY environment variable must be set by Makefile");
-        
+
         let output = Command::new(odo_binary)
             .args(args)
             .current_dir(cwd)
@@ -33,19 +33,25 @@ mod fixture_tests {
         // =================================================================
         // Single Crate Tests
         // =================================================================
-        
+
         let single_crate_dir = test_fixtures_dir().join("single-crate");
-        assert!(single_crate_dir.exists(), "single-crate fixture not found. Run 'make single-crate'");
+        assert!(
+            single_crate_dir.exists(),
+            "single-crate fixture not found. Run 'make single-crate'"
+        );
 
         println!("📦 Testing single crate operations...");
-        
+
         // Test show command
         let (stdout, stderr, success) = run_odo(&["show"], &single_crate_dir);
         if !success {
             eprintln!("Error: {}", stderr);
         }
         assert!(success, "odo show failed on single crate");
-        assert!(stdout.contains("single-crate"), "Expected crate name in output");
+        assert!(
+            stdout.contains("single-crate"),
+            "Expected crate name in output"
+        );
         assert!(stdout.contains('.'), "Expected version number in output");
         println!("  ✅ show: {}", stdout.trim());
 
@@ -67,9 +73,12 @@ mod fixture_tests {
         // =================================================================
         // Simple Workspace Tests
         // =================================================================
-        
+
         let workspace_dir = test_fixtures_dir().join("workspace-simple");
-        assert!(workspace_dir.exists(), "workspace-simple fixture not found. Run 'make workspace-simple'");
+        assert!(
+            workspace_dir.exists(),
+            "workspace-simple fixture not found. Run 'make workspace-simple'"
+        );
 
         println!("\n🏗️  Testing simple workspace operations...");
 
@@ -97,7 +106,10 @@ mod fixture_tests {
             eprintln!("--workspace stdout: {}", stdout);
         }
         assert!(success, "odo roll --workspace patch failed");
-        println!("  ✅ roll --workspace patch (all members): {}", stdout.trim());
+        println!(
+            "  ✅ roll --workspace patch (all members): {}",
+            stdout.trim()
+        );
 
         // Verify all members were updated
         let (stdout, _stderr, success) = run_odo(&["show"], &workspace_dir);
@@ -105,7 +117,8 @@ mod fixture_tests {
         println!("  ✅ after patch --workspace:\n{}", stdout.trim());
 
         // Test package selection
-        let (stdout, stderr, success) = run_odo(&["roll", "--package", "lib1", "patch"], &workspace_dir);
+        let (stdout, stderr, success) =
+            run_odo(&["roll", "--package", "lib1", "patch"], &workspace_dir);
         if !success {
             eprintln!("Package selection error: {}", stderr);
             eprintln!("Package selection stdout: {}", stdout);
@@ -136,17 +149,26 @@ mod fixture_tests {
         // =================================================================
         // Workspace Inheritance Tests
         // =================================================================
-        
+
         let inheritance_dir = test_fixtures_dir().join("workspace-inheritance");
-        assert!(inheritance_dir.exists(), "workspace-inheritance fixture not found. Run 'make workspace-inheritance'");
+        assert!(
+            inheritance_dir.exists(),
+            "workspace-inheritance fixture not found. Run 'make workspace-inheritance'"
+        );
 
         println!("\n🔗 Testing workspace inheritance...");
 
         // Test show with inheritance
         let (stdout, _stderr, success) = run_odo(&["show"], &inheritance_dir);
         assert!(success, "odo show failed on inheritance workspace");
-        assert!(stdout.contains("member1"), "Expected member1 in inheritance output");
-        assert!(stdout.contains("member2"), "Expected member2 in inheritance output");
+        assert!(
+            stdout.contains("member1"),
+            "Expected member1 in inheritance output"
+        );
+        assert!(
+            stdout.contains("member2"),
+            "Expected member2 in inheritance output"
+        );
         println!("  ✅ inheritance show:\n{}", stdout.trim());
 
         // Test version operations with inheritance
@@ -156,9 +178,12 @@ mod fixture_tests {
 
         // Verify inheritance is handled correctly
         let (stdout, _stderr, success) = run_odo(&["show"], &inheritance_dir);
-        assert!(success, "odo show failed after setting version with inheritance");
+        assert!(
+            success,
+            "odo show failed after setting version with inheritance"
+        );
         println!("  ✅ after setting version:\n{}", stdout.trim());
 
         println!("\n🎉 All integration tests passed! Odometer is working correctly.");
     }
-} 
+}

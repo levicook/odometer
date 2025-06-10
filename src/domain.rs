@@ -427,11 +427,9 @@ mod tests {
         let errors = workspace.lint();
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].member, "lib");
-        assert!(
-            errors[0]
-                .message
-                .contains("Invalid version 'invalid-version'")
-        );
+        assert!(errors[0]
+            .message
+            .contains("Invalid version 'invalid-version'"));
     }
 
     #[test]
@@ -442,11 +440,9 @@ mod tests {
         let result = workspace.roll_version(VersionBump::Patch(1), &selection);
 
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Package 'nonexistent' not found")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Package 'nonexistent' not found"));
     }
 }

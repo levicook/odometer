@@ -2,6 +2,9 @@
 # 
 # Key targets:
 #   make install-tools    - Install development dependencies
+#   make ci-docker-full   - Complete CI in Docker (matches GitHub Actions)
+#   make ci-local         - Local CI with all checks
+#   make release-validation - Complete release validation
 #   make fixtures         - Generate all test fixtures  
 #   make test            - Run unit tests (no fixtures)
 #   make test-integration - Run integration tests with fixtures
@@ -18,6 +21,112 @@ install-tools:
 	@echo "✅ cargo found"
 	@cargo --version
 	@echo "✅ Development tools ready"
+
+# =============================================================================
+# CI Targets
+# =============================================================================
+
+.PHONY: ci-quick
+ci-quick:
+	@echo "⚡ Running quick CI checks..."
+	$(MAKE) fmt-check
+	@echo "Core library check:"
+	cargo check --lib --all-features
+	@echo "Core library clippy:"
+	cargo clippy --lib --all-features -- -D warnings
+	@echo "Core library tests:"
+	cargo test --lib --all-features
+	@echo "Documentation check:"
+	cargo doc --lib --all-features --no-deps
+	@echo "Publish dry run:"
+	cargo publish --dry-run --allow-dirty
+	@echo "✅ Quick CI passed"
+
+.PHONY: ci-full
+ci-full:
+	@echo "🚀 Running full CI validation..."
+	$(MAKE) fmt-check
+	$(MAKE) check
+	$(MAKE) test-all
+	@echo "All binaries clippy:"
+	cargo clippy --all-targets --all-features -- -D warnings
+	@echo "Publish dry run:"
+	cargo publish --dry-run --allow-dirty
+	@echo "✅ Full CI passed"
+
+.PHONY: ci-local
+ci-local:
+	@echo "🏠 Running local CI (includes all checks)..."
+	$(MAKE) ci-full
+	@echo "✅ Local CI passed"
+
+# Docker-based CI targets (matches CI environment exactly)
+.PHONY: ci-docker-quick
+ci-docker-quick:
+	@echo "🐳 Running quick CI in Docker container..."
+	@docker pull rust:latest > /dev/null 2>&1 || true
+	@mkdir -p ~/.cargo
+	docker run --rm \
+		-v $$(pwd):/workspace \
+		-v ~/.cargo:/root/.cargo \
+		-w /workspace \
+		rust:latest sh -c "rustup component add clippy rustfmt && rm -f Cargo.lock && make ci-quick"
+
+.PHONY: ci-docker-full
+ci-docker-full:
+	@echo "🐳 Running full CI in Docker container..."
+	@docker pull rust:latest > /dev/null 2>&1 || true
+	@mkdir -p ~/.cargo
+	docker run --rm \
+		-v $$(pwd):/workspace \
+		-v ~/.cargo:/root/.cargo \
+		-w /workspace \
+		rust:latest sh -c "rustup component add clippy rustfmt && rm -f Cargo.lock && make ci-full"
+
+# Main CI target for GitHub Actions
+.PHONY: ci
+ci: ci-docker-full
+
+# Release validation - comprehensive checks before publishing
+.PHONY: release-validation
+release-validation:
+	@echo "🚀 Running release validation..."
+	@echo "Verifying tag matches Cargo.toml version..."
+	@if [ -n "$$TAG_VERSION" ] && [ -n "$$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')" ]; then \
+		CARGO_VERSION=$$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/'); \
+		if [ "$$TAG_VERSION" != "$$CARGO_VERSION" ]; then \
+			echo "❌ Tag version $$TAG_VERSION doesn't match Cargo.toml version $$CARGO_VERSION"; \
+			exit 1; \
+		fi; \
+		echo "✅ Tag version matches Cargo.toml version: $$TAG_VERSION"; \
+	fi
+	$(MAKE) ci-docker-full
+	@echo "✅ Release validation passed"
+
+# Publish to crates.io (requires CARGO_REGISTRY_TOKEN)
+.PHONY: publish
+publish:
+	@echo "📦 Publishing to crates.io..."
+	cargo publish --token $$CARGO_REGISTRY_TOKEN
+	@echo "✅ Published to crates.io"
+
+# Dogfooding - Use our own tool for releases! 🎯
+.PHONY: release-patch release-minor release-major
+release-patch:
+	@./scripts/release.sh patch
+
+release-minor:
+	@./scripts/release.sh minor
+
+release-major:
+	@./scripts/release.sh major
+
+# Install odo locally for dogfooding
+.PHONY: install-local
+install-local:
+	@echo "📦 Installing odo locally..."
+	cargo install --path . --force
+	@echo "✅ odo installed! Try: odo show"
 
 # =============================================================================
 # Test Fixtures (Git-ignored, generated on demand)
@@ -110,12 +219,30 @@ test-integration: build clean-fixtures fixtures
 test-all: test test-integration
 
 # =============================================================================
+# Code Quality
+# =============================================================================
+
+.PHONY: fmt
+fmt:
+	@echo "🎨 Formatting code..."
+	cargo fmt --all
+	@echo "✅ Code formatted"
+
+.PHONY: fmt-check
+fmt-check:
+	@echo "🎨 Checking code formatting..."
+	cargo fmt --all -- --check
+	@echo "✅ Code formatting OK"
+
+# =============================================================================
 # Development
 # =============================================================================
 
 .PHONY: check
 check:
-	cargo check
+	@echo "🔍 Checking workspace..."
+	cargo check --workspace
+	@echo "✅ Workspace check passed"
 
 .PHONY: build
 build:
@@ -138,6 +265,23 @@ help:
 	@echo "  make test             Run unit tests (fast)"
 	@echo "  make test-integration Run integration walkthrough with fixtures"
 	@echo "  make test-all         Run all tests"
+	@echo ""
+	@echo "CI & Quality:"
+	@echo "  make ci-quick         Fast CI checks (local)"
+	@echo "  make ci-local         Complete local CI"
+	@echo "  make ci-docker-full   Full CI in Docker (matches GitHub Actions)"
+	@echo "  make fmt              Format code"
+	@echo "  make fmt-check        Check code formatting"
+	@echo ""
+	@echo "Release:"
+	@echo "  make release-validation  Complete release validation"
+	@echo "  make publish            Publish to crates.io"
+	@echo ""
+	@echo "Dogfooding (using our own odo tool!):"
+	@echo "  make install-local      Install odo locally"
+	@echo "  make release-patch      Release patch version (bug fixes)"
+	@echo "  make release-minor      Release minor version (new features)"
+	@echo "  make release-major      Release major version (breaking changes)"
 	@echo ""
 	@echo "Fixtures:"
 	@echo "  make fixtures         Generate all test fixtures"
