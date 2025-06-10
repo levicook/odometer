@@ -64,13 +64,6 @@ pub(crate) enum Commands {
 }
 
 #[derive(Args, Debug)]
-pub(crate) struct BumpAmount {
-    /// Amount to increment/decrement (default: 1, negative values decrement)
-    #[arg(default_value = "1")]
-    pub(crate) amount: i32,
-}
-
-#[derive(Args, Debug)]
 pub(crate) struct PackageSelection {
     /// Target specific package(s) - can be used multiple times
     #[arg(short = 'p', long = "package")]
@@ -93,8 +86,9 @@ pub(crate) struct PackageSelection {
 pub(crate) enum BumpType {
     /// Increment major version (x.0.0)
     Major {
-        #[command(flatten)]
-        amount: BumpAmount,
+        /// Amount to increment/decrement (default: 1, negative values decrement)
+        #[arg(default_value = "1", allow_negative_numbers = true)]
+        amount: i32,
 
         #[command(flatten)]
         package_selection: PackageSelection,
@@ -106,8 +100,9 @@ pub(crate) enum BumpType {
 
     /// Increment minor version (x.y.0)
     Minor {
-        #[command(flatten)]
-        amount: BumpAmount,
+        /// Amount to increment/decrement (default: 1, negative values decrement)
+        #[arg(default_value = "1", allow_negative_numbers = true)]
+        amount: i32,
 
         #[command(flatten)]
         package_selection: PackageSelection,
@@ -119,8 +114,9 @@ pub(crate) enum BumpType {
 
     /// Increment patch version (x.y.z)
     Patch {
-        #[command(flatten)]
-        amount: BumpAmount,
+        /// Amount to increment/decrement (default: 1, negative values decrement)
+        #[arg(default_value = "1", allow_negative_numbers = true)]
+        amount: i32,
 
         #[command(flatten)]
         package_selection: PackageSelection,
@@ -146,7 +142,7 @@ impl From<BumpType>
                 package_selection,
                 format,
             } => (
-                crate::domain::VersionBump::Major(amount.amount),
+                crate::domain::VersionBump::Major(amount),
                 package_selection.into(),
                 format,
             ),
@@ -155,7 +151,7 @@ impl From<BumpType>
                 package_selection,
                 format,
             } => (
-                crate::domain::VersionBump::Minor(amount.amount),
+                crate::domain::VersionBump::Minor(amount),
                 package_selection.into(),
                 format,
             ),
@@ -164,7 +160,7 @@ impl From<BumpType>
                 package_selection,
                 format,
             } => (
-                crate::domain::VersionBump::Patch(amount.amount),
+                crate::domain::VersionBump::Patch(amount),
                 package_selection.into(),
                 format,
             ),

@@ -265,26 +265,47 @@ impl VersionBump {
         match self {
             VersionBump::Major(amount) => {
                 if *amount < 0 {
-                    version.major = version.major.saturating_sub(amount.unsigned_abs() as u64);
+                    let abs_amount = amount.unsigned_abs() as u64;
+                    if version.major < abs_amount {
+                        anyhow::bail!(
+                            "Cannot decrement major version by {} from {}: would result in negative version",
+                            abs_amount, current
+                        );
+                    }
+                    version.major -= abs_amount;
                 } else {
-                    version.major = version.major.saturating_add(*amount as u64);
+                    version.major += *amount as u64;
                 }
                 version.minor = 0;
                 version.patch = 0;
             }
             VersionBump::Minor(amount) => {
                 if *amount < 0 {
-                    version.minor = version.minor.saturating_sub(amount.unsigned_abs() as u64);
+                    let abs_amount = amount.unsigned_abs() as u64;
+                    if version.minor < abs_amount {
+                        anyhow::bail!(
+                            "Cannot decrement minor version by {} from {}: would result in negative version",
+                            abs_amount, current
+                        );
+                    }
+                    version.minor -= abs_amount;
                 } else {
-                    version.minor = version.minor.saturating_add(*amount as u64);
+                    version.minor += *amount as u64;
                 }
                 version.patch = 0;
             }
             VersionBump::Patch(amount) => {
                 if *amount < 0 {
-                    version.patch = version.patch.saturating_sub(amount.unsigned_abs() as u64);
+                    let abs_amount = amount.unsigned_abs() as u64;
+                    if version.patch < abs_amount {
+                        anyhow::bail!(
+                            "Cannot decrement patch version by {} from {}: would result in negative version",
+                            abs_amount, current
+                        );
+                    }
+                    version.patch -= abs_amount;
                 } else {
-                    version.patch = version.patch.saturating_add(*amount as u64);
+                    version.patch += *amount as u64;
                 }
             }
         }
@@ -380,16 +401,56 @@ mod tests {
     }
 
     #[test]
-    fn test_version_bump_negative_saturating() {
-        // Test saturating subtraction (doesn't go below 0)
+    fn test_version_bump_negative_errors() {
+        // Test that operations resulting in negative versions return errors
         let bump = VersionBump::Patch(-10);
-        assert_eq!(bump.apply_to_version("1.0.3").unwrap(), "1.0.0");
+        let result = bump.apply_to_version("1.0.3");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("would result in negative version"));
 
         let bump = VersionBump::Minor(-5);
-        assert_eq!(bump.apply_to_version("1.2.0").unwrap(), "1.0.0");
+        let result = bump.apply_to_version("1.2.0");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("would result in negative version"));
 
         let bump = VersionBump::Major(-10);
-        assert_eq!(bump.apply_to_version("2.0.0").unwrap(), "0.0.0");
+        let result = bump.apply_to_version("2.0.0");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("would result in negative version"));
+    }
+
+    #[test]
+    fn test_version_bump_patch_invalid_operations() {
+        // Test the exact scenario we saw: patch -2 on 0.1.0 should error
+        let bump = VersionBump::Patch(-2);
+        let result = bump.apply_to_version("0.1.0");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Cannot decrement patch version by 2 from 0.1.0"));
+
+        // Also test patch -1 on 0.1.0 (should also error)
+        let bump = VersionBump::Patch(-1);
+        let result = bump.apply_to_version("0.1.0");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Cannot decrement patch version by 1 from 0.1.0"));
+
+        // Test that positive still works
+        let bump = VersionBump::Patch(2);
+        assert_eq!(bump.apply_to_version("0.1.0").unwrap(), "0.1.2");
     }
 
     #[test]
@@ -530,5 +591,139 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("Package 'nonexistent' not found"));
+    }
+
+    #[test]
+    fn test_workspace_roll_version_invalid_operation() {
+        // Test what happens when a roll operation would result in invalid versions
+        let mut workspace = create_test_workspace(vec![("app", "0.1.0"), ("lib", "0.1.0")]);
+
+        let selection = PackageSelection::workspace();
+        let result = workspace.roll_version(VersionBump::Patch(-2), &selection);
+
+        // Should return an error explaining why the operation failed
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Cannot decrement patch version by 2 from 0.1.0"));
+
+        // Versions should remain unchanged
+        assert_eq!(workspace.members[0].version(), "0.1.0");
+        assert_eq!(workspace.members[1].version(), "0.1.0");
+    }
+
+    #[test]
+    fn test_version_bump_cross_component_boundaries() {
+        // Test that we don't "borrow" from higher components
+        let bump = VersionBump::Patch(-1);
+        let result = bump.apply_to_version("1.2.0");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Cannot decrement patch version by 1 from 1.2.0"));
+
+        let bump = VersionBump::Minor(-1);
+        let result = bump.apply_to_version("1.0.5");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Cannot decrement minor version by 1 from 1.0.5"));
+    }
+
+    #[test]
+    fn test_version_bump_absolute_minimum() {
+        // Test rolling back from 0.0.0
+        let bump = VersionBump::Patch(-1);
+        let result = bump.apply_to_version("0.0.0");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Cannot decrement patch version by 1 from 0.0.0"));
+
+        let bump = VersionBump::Minor(-1);
+        let result = bump.apply_to_version("0.0.0");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Cannot decrement minor version by 1 from 0.0.0"));
+
+        let bump = VersionBump::Major(-1);
+        let result = bump.apply_to_version("0.0.0");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Cannot decrement major version by 1 from 0.0.0"));
+    }
+
+    #[test]
+    fn test_workspace_roll_version_mixed_validity() {
+        // Test workspace with mixed versions where some can handle rollback and others can't
+        let mut workspace = create_test_workspace(vec![
+            ("app", "1.0.2"),   // Can handle patch -2
+            ("lib", "0.1.0"),   // Cannot handle patch -2 (will cause error)
+            ("utils", "2.5.3"), // Can handle patch -2
+        ]);
+
+        let selection = PackageSelection::workspace();
+        let result = workspace.roll_version(VersionBump::Patch(-2), &selection);
+
+        // Should fail on the invalid package
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Cannot decrement patch version by 2 from 0.1.0"));
+
+        // Note: Even though first package gets modified in-memory during processing,
+        // the CLI layer won't save the workspace when domain operations fail,
+        // so from the user's perspective, no changes occur to disk
+        //
+        // However, this test is only exercising domain logic, so we see the in-memory changes:
+        assert_eq!(workspace.members[0].version(), "1.0.0"); // app was modified in-memory
+        assert_eq!(workspace.members[1].version(), "0.1.0"); // lib unchanged (caused error)
+        assert_eq!(workspace.members[2].version(), "2.5.3"); // utils unchanged (not processed)
+    }
+
+    #[test]
+    fn test_version_bump_large_negative_numbers() {
+        // Test very large negative numbers
+        let bump = VersionBump::Patch(-999999);
+        let result = bump.apply_to_version("1.0.5");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Cannot decrement patch version by 999999 from 1.0.5"));
+    }
+
+    #[test]
+    fn test_version_bump_prerelease_versions() {
+        // Test how pre-release versions behave with rollback
+        let bump = VersionBump::Patch(-1);
+
+        // Rolling back from 1.0.1-alpha preserves the pre-release identifier
+        assert_eq!(bump.apply_to_version("1.0.1-alpha").unwrap(), "1.0.0-alpha");
+
+        // Rolling back from 1.0.0-alpha should fail (can't go to 0.-1.0-alpha)
+        let result = bump.apply_to_version("1.0.0-alpha");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Cannot decrement patch version by 1 from 1.0.0-alpha"));
+
+        // Test minor rollback with pre-release (resets patch to 0, preserves pre-release)
+        let bump = VersionBump::Minor(-1);
+        assert_eq!(bump.apply_to_version("1.1.5-beta").unwrap(), "1.0.0-beta");
+
+        // Test major rollback with pre-release (resets minor and patch to 0, preserves pre-release)
+        let bump = VersionBump::Major(-1);
+        assert_eq!(bump.apply_to_version("2.3.5-rc.1").unwrap(), "1.0.0-rc.1");
     }
 }

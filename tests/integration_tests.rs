@@ -186,4 +186,96 @@ mod fixture_tests {
 
         println!("\n🎉 All integration tests passed! Odometer is working correctly.");
     }
+
+    #[test]
+    fn test_atomic_behavior_on_error() {
+        println!("🔒 Testing atomic behavior: no partial modifications on error...\n");
+
+        let workspace_dir = test_fixtures_dir().join("workspace-simple");
+        assert!(
+            workspace_dir.exists(),
+            "workspace-simple fixture not found. Run 'make workspace-simple'"
+        );
+
+        // First, set up a known state with mixed versions
+        let (_stdout, _stderr, success) = run_odo(&["set", "1.0.2"], &workspace_dir);
+        assert!(success, "Failed to set workspace root to 1.0.2");
+
+        let (_stdout, _stderr, success) =
+            run_odo(&["set", "0.1.0", "--package", "lib1"], &workspace_dir);
+        assert!(success, "Failed to set lib1 to 0.1.0");
+
+        let (_stdout, _stderr, success) =
+            run_odo(&["set", "2.5.3", "--package", "lib2"], &workspace_dir);
+        assert!(success, "Failed to set lib2 to 2.5.3");
+
+        // Verify the mixed state
+        let (stdout, _stderr, success) = run_odo(&["show"], &workspace_dir);
+        assert!(success, "Failed to show initial state");
+        println!("  📋 Initial state:\n{}", stdout.trim());
+
+        // Record the exact file contents before the failing operation
+        let workspace_toml_before = std::fs::read_to_string(workspace_dir.join("Cargo.toml"))
+            .expect("Failed to read workspace Cargo.toml");
+        let lib1_toml_before = std::fs::read_to_string(workspace_dir.join("lib1/Cargo.toml"))
+            .expect("Failed to read lib1 Cargo.toml");
+        let lib2_toml_before = std::fs::read_to_string(workspace_dir.join("lib2/Cargo.toml"))
+            .expect("Failed to read lib2 Cargo.toml");
+
+        // Now attempt an operation that should fail partway through:
+        // workspace-simple (1.0.2) -> 1.0.0 ✅ (would succeed)
+        // lib1 (0.1.0) -> 0.1.-2 ❌ (will fail - cannot decrement patch by 2)
+        // lib2 (2.5.3) -> 2.5.1 ✅ (would succeed, but never processed due to early error)
+        let (_stdout, stderr, success) =
+            run_odo(&["roll", "patch", "-2", "--workspace"], &workspace_dir);
+
+        // Verify the operation failed
+        assert!(!success, "Expected operation to fail, but it succeeded");
+        assert!(
+            stderr.contains("Cannot decrement patch version by 2 from 0.1.0"),
+            "Expected specific error message about lib1, got: {}",
+            stderr
+        );
+        println!("  ❌ Expected error occurred: {}", stderr.trim());
+
+        // CRITICAL TEST: Verify NO files were modified despite the error
+        let workspace_toml_after = std::fs::read_to_string(workspace_dir.join("Cargo.toml"))
+            .expect("Failed to read workspace Cargo.toml after error");
+        let lib1_toml_after = std::fs::read_to_string(workspace_dir.join("lib1/Cargo.toml"))
+            .expect("Failed to read lib1 Cargo.toml after error");
+        let lib2_toml_after = std::fs::read_to_string(workspace_dir.join("lib2/Cargo.toml"))
+            .expect("Failed to read lib2 Cargo.toml after error");
+
+        assert_eq!(
+            workspace_toml_before, workspace_toml_after,
+            "Workspace Cargo.toml was modified despite operation failure!"
+        );
+        assert_eq!(
+            lib1_toml_before, lib1_toml_after,
+            "lib1 Cargo.toml was modified despite operation failure!"
+        );
+        assert_eq!(
+            lib2_toml_before, lib2_toml_after,
+            "lib2 Cargo.toml was modified despite operation failure!"
+        );
+
+        // Double-check by reading versions through odo
+        let (stdout, _stderr, success) = run_odo(&["show"], &workspace_dir);
+        assert!(success, "Failed to show state after error");
+        println!(
+            "  📋 State after failed operation (should be unchanged):\n{}",
+            stdout.trim()
+        );
+
+        // Verify versions are exactly as they were before
+        assert!(
+            stdout.contains("workspace-simple 1.0.2"),
+            "workspace-simple version changed!"
+        );
+        assert!(stdout.contains("lib1 0.1.0"), "lib1 version changed!");
+        assert!(stdout.contains("lib2 2.5.3"), "lib2 version changed!");
+
+        println!("  ✅ ATOMIC BEHAVIOR VERIFIED: No files modified on error");
+        println!("  ✅ This ensures users never get partially-modified workspaces");
+    }
 }
