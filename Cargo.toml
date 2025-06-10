@@ -1,0 +1,42 @@
+[package]
+name = "odometer"
+version = "0.2.0"
+edition = "2021"
+description = "A workspace version management tool that keeps package versions synchronized across projects"
+license = "MIT"
+repository = "https://github.com/levicook/odometer"
+homepage = "https://github.com/levicook/odometer"
+documentation = "https://github.com/levicook/odometer"
+readme = "README.md"
+keywords = ["workspace", "version", "cargo", "semver", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+authors = ["Levi Cook <levicook@gmail.com>"]
+
+[lib]
+name = "odometer"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cargo-odometer"
+path = "src/bin/cargo-odometer.rs"
+
+[[bin]]
+name = "cargo-odo"
+path = "src/bin/cargo-odo.rs"
+
+[[bin]]
+name = "odometer"
+path = "src/bin/odometer.rs"
+
+[[bin]]
+name = "odo"
+path = "src/bin/odo.rs"
+
+[dependencies]
+anyhow = "1.0.98"
+clap = { version = "4.5", features = ["derive"] }
+semver = "1.0.26"
+toml_edit = "0.22.27"
+
+[features]
+fixture-tests = []
