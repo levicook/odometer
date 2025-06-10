@@ -100,14 +100,14 @@ mod fixture_tests {
         println!("  ✅ after minor bump (root only):\n{}", stdout.trim());
 
         // Test EXPLICIT --workspace behavior: all members
-        let (stdout, stderr, success) = run_odo(&["roll", "--workspace", "patch"], &workspace_dir);
+        let (stdout, stderr, success) = run_odo(&["roll", "patch", "--workspace"], &workspace_dir);
         if !success {
             eprintln!("--workspace error: {}", stderr);
             eprintln!("--workspace stdout: {}", stdout);
         }
-        assert!(success, "odo roll --workspace patch failed");
+        assert!(success, "odo roll patch --workspace failed");
         println!(
-            "  ✅ roll --workspace patch (all members): {}",
+            "  ✅ roll patch --workspace (all members): {}",
             stdout.trim()
         );
 
@@ -118,13 +118,13 @@ mod fixture_tests {
 
         // Test package selection
         let (stdout, stderr, success) =
-            run_odo(&["roll", "--package", "lib1", "patch"], &workspace_dir);
+            run_odo(&["roll", "patch", "--package", "lib1"], &workspace_dir);
         if !success {
             eprintln!("Package selection error: {}", stderr);
             eprintln!("Package selection stdout: {}", stdout);
         }
         assert!(success, "odo roll with package selection failed");
-        println!("  ✅ roll --package lib1 patch: {}", stdout.trim());
+        println!("  ✅ roll patch --package lib1: {}", stdout.trim());
 
         // Verify only lib1 was updated (versions should now be different)
         let (stdout, _stderr, success) = run_odo(&["show"], &workspace_dir);

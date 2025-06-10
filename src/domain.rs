@@ -1,19 +1,52 @@
 use anyhow::Context;
+use semver;
+use serde::Serialize;
 use std::path::PathBuf;
 
 /// Domain types for version management operations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum VersionBump {
     Major(i32),
     Minor(i32),
     Patch(i32),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PackageSelection {
     pub packages: Vec<String>,
     pub workspace: bool,
     pub exclude: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VersionChange {
+    pub package: String,
+    pub old_version: String,
+    pub new_version: String,
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OperationResult {
+    pub changes: Vec<VersionChange>,
+    pub operation: String,
+}
+
+impl OperationResult {
+    pub fn new(operation: String) -> Self {
+        Self {
+            changes: Vec::new(),
+            operation,
+        }
+    }
+
+    pub fn add_change(&mut self, change: VersionChange) {
+        self.changes.push(change);
+    }
+
+    pub fn has_changes(&self) -> bool {
+        !self.changes.is_empty()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -83,47 +116,93 @@ impl Workspace {
         &mut self,
         bump: VersionBump,
         selection: &PackageSelection,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<OperationResult> {
+        let mut result = OperationResult::new(format!(
+            "roll {}",
+            match bump {
+                VersionBump::Major(amount) => format!("major {}", amount),
+                VersionBump::Minor(amount) => format!("minor {}", amount),
+                VersionBump::Patch(amount) => format!("patch {}", amount),
+            }
+        ));
+
         let indices = self.select_member_indices(selection)?;
         for &index in &indices {
-            let current_version = self.members[index].version().to_string();
-            let new_version = bump.apply_to_version(&current_version)?;
-            self.members[index].set_version(&new_version);
+            let member = &mut self.members[index];
+            let old_version = member.version().to_string();
+            let new_version = bump.apply_to_version(&old_version)?;
+
+            if old_version != new_version {
+                result.add_change(VersionChange {
+                    package: member.name().to_string(),
+                    old_version: old_version.clone(),
+                    new_version: new_version.clone(),
+                    path: member.path().clone(),
+                });
+
+                member.set_version(&new_version);
+            }
         }
-        Ok(())
+        Ok(result)
     }
 
     pub fn set_version(
         &mut self,
         version: &str,
         selection: &PackageSelection,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<OperationResult> {
+        let mut result = OperationResult::new(format!("set {}", version));
+
         let indices = self.select_member_indices(selection)?;
         for &index in &indices {
-            self.members[index].set_version(version);
+            let member = &mut self.members[index];
+            let old_version = member.version().to_string();
+
+            if old_version != version {
+                result.add_change(VersionChange {
+                    package: member.name().to_string(),
+                    old_version: old_version.clone(),
+                    new_version: version.to_string(),
+                    path: member.path().clone(),
+                });
+
+                member.set_version(version);
+            }
         }
-        Ok(())
+        Ok(result)
     }
 
-    pub fn sync_version(&mut self, version: &str) -> anyhow::Result<()> {
-        // Sync sets ALL members to the same version (lockstep)
+    pub fn sync_version(&mut self, version: &str) -> anyhow::Result<OperationResult> {
+        let mut result = OperationResult::new(format!("sync {}", version));
+
         for member in &mut self.members {
-            member.set_version(version);
+            let old_version = member.version().to_string();
+
+            if old_version != version {
+                result.add_change(VersionChange {
+                    package: member.name().to_string(),
+                    old_version: old_version.clone(),
+                    new_version: version.to_string(),
+                    path: member.path().clone(),
+                });
+
+                member.set_version(version);
+            }
         }
-        Ok(())
+        Ok(result)
     }
 
-    pub fn show(&self) -> String {
+    pub fn show(&self, selection: &PackageSelection) -> String {
         let mut output = String::new();
-        for member in &self.members {
+        for member in self.selected_members(selection) {
             output.push_str(&format!("{} {}\n", member.name(), member.version()));
         }
         output
     }
 
-    pub fn lint(&self) -> Vec<LintError> {
+    pub fn lint(&self, selection: &PackageSelection) -> Vec<LintError> {
         let mut errors = Vec::new();
-        for member in &self.members {
+        for member in self.selected_members(selection) {
             if let Err(e) = semver::Version::parse(member.version()) {
                 errors.push(LintError {
                     member: member.name().to_string(),
@@ -132,6 +211,13 @@ impl Workspace {
             }
         }
         errors
+    }
+
+    pub fn selected_members(&self, selection: &PackageSelection) -> Vec<&WorkspaceMember> {
+        match self.select_member_indices(selection) {
+            Ok(indices) => indices.iter().map(|&i| &self.members[i]).collect(),
+            Err(_) => self.members.iter().collect(), // fallback to all members
+        }
     }
 
     fn select_member_indices(&self, selection: &PackageSelection) -> anyhow::Result<Vec<usize>> {
@@ -408,7 +494,7 @@ mod tests {
     fn test_workspace_show() {
         let workspace = create_test_workspace(vec![("app", "1.0.0"), ("lib", "0.5.0")]);
 
-        let output = workspace.show();
+        let output = workspace.show(&PackageSelection::workspace());
         assert_eq!(output, "app 1.0.0\nlib 0.5.0\n");
     }
 
@@ -416,7 +502,7 @@ mod tests {
     fn test_workspace_lint_valid() {
         let workspace = create_test_workspace(vec![("app", "1.0.0"), ("lib", "0.5.0")]);
 
-        let errors = workspace.lint();
+        let errors = workspace.lint(&PackageSelection::root_only());
         assert!(errors.is_empty());
     }
 
@@ -424,7 +510,7 @@ mod tests {
     fn test_workspace_lint_invalid() {
         let workspace = create_test_workspace(vec![("app", "1.0.0"), ("lib", "invalid-version")]);
 
-        let errors = workspace.lint();
+        let errors = workspace.lint(&PackageSelection::workspace());
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].member, "lib");
         assert!(errors[0]
