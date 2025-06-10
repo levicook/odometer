@@ -23,7 +23,17 @@ Odometer provides intuitive commands to manage versions across project workspace
 
 ## Installation
 
-### From Source
+### From crates.io (Recommended)
+
+```bash
+# Install latest stable release
+cargo install odometer
+
+# Or install specific version
+cargo install odometer@0.3.1
+```
+
+### From Source (Development)
 
 ```bash
 git clone https://github.com/levicook/odometer.git
@@ -31,14 +41,21 @@ cd odometer
 cargo install --path .
 ```
 
-### Usage
+### Verify Installation
+
+```bash
+odo --version
+# Output: odometer 0.3.1
+```
+
+### Multiple Binary Names
 
 Odometer provides multiple binary names for convenience:
 
 ```bash
-odo --help          # Short form
+odo --help          # Short form (recommended)
 odometer --help     # Full name
-cargo odo --help    # Cargo subcommand (when working with Rust projects)
+cargo odo --help    # Cargo subcommand style
 cargo odometer --help
 ```
 

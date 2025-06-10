@@ -2,8 +2,9 @@ use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "odometer")]
-#[command(about = "A Rust workspace version management tool")]
-#[command(long_about = "Keeps all crate versions synchronized in a Rust workspace")]
+#[command(about = "A workspace version management tool")]
+#[command(long_about = "Keeps package versions synchronized across projects")]
+#[command(version)]
 pub(crate) struct Cli {
     #[command(subcommand)]
     pub(crate) command: Commands,
