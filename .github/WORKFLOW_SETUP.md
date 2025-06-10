@@ -35,8 +35,8 @@ ci-docker-full:
 **Triggers:** Push to `main`, all pull requests  
 **Jobs:**
 
-- **Quick Checks (Native)** → `make ci-quick` - Fast feedback on library
-- **Docker Validation (Complete)** → `make ci-docker-full` - Full validation in production environment
+- **CI Validation** → `make ci` - Comprehensive validation including integration tests
+- Uses Docker environment matching production for consistency
 
 ### 2. **Release Workflow** (`.github/workflows/release.yml`)
 

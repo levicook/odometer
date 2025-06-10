@@ -10,27 +10,9 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Quick CI for fast feedback (native)
-  quick-checks:
-    name: Quick Checks (Native)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-      - run: make ci-quick
-
-  # Complete validation in Docker (matches local environment)
-  docker-validation:
-    name: Docker Validation (Complete)
+  # Comprehensive CI validation in Docker (matches local environment exactly)
+  ci:
+    name: CI Validation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -53,4 +35,4 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-registry-
 
-      - run: make ci-docker-full
+      - run: make ci

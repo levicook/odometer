@@ -37,7 +37,7 @@ echo "📝 New version: $VERSION"
 
 # Run CI to make sure everything still works
 echo "🧪 Running quick CI checks..."
-make ci-quick
+make ci-local
 
 echo "💾 Committing and tagging..."
 git add -A

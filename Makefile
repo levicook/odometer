@@ -26,25 +26,9 @@ install-tools:
 # CI Targets
 # =============================================================================
 
-.PHONY: ci-quick
-ci-quick:
-	@echo "⚡ Running quick CI checks..."
-	$(MAKE) fmt-check
-	@echo "Core library check:"
-	cargo check --lib --all-features
-	@echo "Core library clippy:"
-	cargo clippy --lib --all-features -- -D warnings
-	@echo "Core library tests:"
-	cargo test --lib --all-features
-	@echo "Documentation check:"
-	cargo doc --lib --all-features --no-deps
-	@echo "Publish dry run:"
-	cargo publish --dry-run --allow-dirty
-	@echo "✅ Quick CI passed"
-
-.PHONY: ci-full
-ci-full:
-	@echo "🚀 Running full CI validation..."
+.PHONY: ci
+ci:
+	@echo "🚀 Running comprehensive CI validation..."
 	$(MAKE) fmt-check
 	$(MAKE) check
 	$(MAKE) test-all
@@ -52,40 +36,25 @@ ci-full:
 	cargo clippy --all-targets --all-features -- -D warnings
 	@echo "Publish dry run:"
 	cargo publish --dry-run --allow-dirty
-	@echo "✅ Full CI passed"
+	@echo "✅ CI passed"
 
 .PHONY: ci-local
-ci-local:
-	@echo "🏠 Running local CI (includes all checks)..."
-	$(MAKE) ci-full
+ci-local: ci
 	@echo "✅ Local CI passed"
 
 # Docker-based CI targets (matches CI environment exactly)
-.PHONY: ci-docker-quick
-ci-docker-quick:
-	@echo "🐳 Running quick CI in Docker container..."
+.PHONY: ci-docker
+ci-docker:
+	@echo "🐳 Running CI in Docker container..."
 	@docker pull rust:latest > /dev/null 2>&1 || true
 	@mkdir -p ~/.cargo
 	docker run --rm \
 		-v $$(pwd):/workspace \
 		-v ~/.cargo:/root/.cargo \
 		-w /workspace \
-		rust:latest sh -c "rustup component add clippy rustfmt && rm -f Cargo.lock && make ci-quick"
+		rust:latest sh -c "rustup component add clippy rustfmt && rm -f Cargo.lock && make ci"
 
-.PHONY: ci-docker-full
-ci-docker-full:
-	@echo "🐳 Running full CI in Docker container..."
-	@docker pull rust:latest > /dev/null 2>&1 || true
-	@mkdir -p ~/.cargo
-	docker run --rm \
-		-v $$(pwd):/workspace \
-		-v ~/.cargo:/root/.cargo \
-		-w /workspace \
-		rust:latest sh -c "rustup component add clippy rustfmt && rm -f Cargo.lock && make ci-full"
 
-# Main CI target for GitHub Actions
-.PHONY: ci
-ci: ci-docker-full
 
 # Release validation - comprehensive checks before publishing
 .PHONY: release-validation
@@ -100,7 +69,7 @@ release-validation:
 		fi; \
 		echo "✅ Tag version matches Cargo.toml version: $$TAG_VERSION"; \
 	fi
-	$(MAKE) ci-docker-full
+	$(MAKE) ci-docker
 	@echo "✅ Release validation passed"
 
 # Publish to crates.io (requires CARGO_REGISTRY_TOKEN)
@@ -267,9 +236,9 @@ help:
 	@echo "  make test-all         Run all tests"
 	@echo ""
 	@echo "CI & Quality:"
-	@echo "  make ci-quick         Fast CI checks (local)"
-	@echo "  make ci-local         Complete local CI"
-	@echo "  make ci-docker-full   Full CI in Docker (matches GitHub Actions)"
+	@echo "  make ci               Comprehensive CI validation (recommended)"
+	@echo "  make ci-local         Local CI (same as 'ci')"
+	@echo "  make ci-docker        CI in Docker (matches GitHub Actions)"
 	@echo "  make fmt              Format code"
 	@echo "  make fmt-check        Check code formatting"
 	@echo ""
