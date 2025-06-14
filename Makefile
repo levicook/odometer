@@ -2,7 +2,6 @@
 # 
 # Key targets:
 #   make install-tools      - Install development dependencies
-#   make ci-docker-full     - Complete CI in Docker (matches GitHub Actions)
 #   make ci-local           - Local CI with all checks
 #   make release-validation - Complete release validation
 #   make fixtures           - Generate all test fixtures  
@@ -46,34 +45,20 @@ ci:
 ci-local: ci
 	@echo "✅ Local CI passed"
 
-# Docker-based CI targets (matches CI environment exactly)
-.PHONY: ci-docker
-ci-docker:
-	@echo "🐳 Running CI in Docker container..."
-	@docker pull rust:latest > /dev/null 2>&1 || true
-	@mkdir -p ~/.cargo
-	docker run --rm \
-		-v $$(pwd):/workspace \
-		-v ~/.cargo:/root/.cargo \
-		-w /workspace \
-		rust:latest sh -c "rustup component add clippy rustfmt && rm -f Cargo.lock && make ci"
-
-
-
 # Release validation - comprehensive checks before publishing
 .PHONY: release-validation
 release-validation:
 	@echo "🚀 Running release validation..."
 	@echo "Verifying tag matches Cargo.toml version..."
-	@if [ -n "$$TAG_VERSION" ] && [ -n "$$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')" ]; then \
-		CARGO_VERSION=$$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/'); \
+	@if [ -n "$$TAG_VERSION" ] && [ -n "$$(grep '^version = ' Cargo.toml | sed 's/version = \"(.*)\"/\\1/')" ]; then \
+		CARGO_VERSION=$$(grep '^version = ' Cargo.toml | sed 's/version = \"(.*)\"/\\1/'); \
 		if [ "$$TAG_VERSION" != "$$CARGO_VERSION" ]; then \
 			echo "❌ Tag version $$TAG_VERSION doesn't match Cargo.toml version $$CARGO_VERSION"; \
 			exit 1; \
 		fi; \
 		echo "✅ Tag version matches Cargo.toml version: $$TAG_VERSION"; \
 	fi
-	$(MAKE) ci-docker
+	$(MAKE) ci
 	@echo "✅ Release validation passed"
 
 # Publish to crates.io (requires CARGO_REGISTRY_TOKEN)
@@ -215,7 +200,6 @@ help:
 	@echo "CI & Quality:"
 	@echo "  make ci               Comprehensive CI validation (recommended)"
 	@echo "  make ci-local         Local CI (same as 'ci')"
-	@echo "  make ci-docker        CI in Docker (matches GitHub Actions)"
 	@echo "  make fmt              Format code"
 	@echo "  make fmt-check        Check code formatting"
 	@echo ""
