@@ -1,14 +1,14 @@
 # Odometer Development Makefile
 # 
 # Key targets:
-#   make install-tools    - Install development dependencies
-#   make ci-docker-full   - Complete CI in Docker (matches GitHub Actions)
-#   make ci-local         - Local CI with all checks
+#   make install-tools      - Install development dependencies
+#   make ci-docker-full     - Complete CI in Docker (matches GitHub Actions)
+#   make ci-local           - Local CI with all checks
 #   make release-validation - Complete release validation
-#   make fixtures         - Generate all test fixtures  
-#   make test            - Run unit tests (no fixtures)
-#   make test-integration - Run integration tests with fixtures
-#   make test-all        - Run all tests
+#   make fixtures           - Generate all test fixtures  
+#   make test               - Run unit tests (no fixtures)
+#   make test-integration   - Run integration tests with fixtures
+#   make test-all           - Run all tests
 
 # =============================================================================
 # Development Setup
@@ -20,6 +20,10 @@ install-tools:
 	@which cargo >/dev/null || (echo "❌ cargo not found. Install Rust: https://rustup.rs/" && exit 1)
 	@echo "✅ cargo found"
 	@cargo --version
+	@which npm >/dev/null || (echo "❌ npm not found. Install Node.js: https://nodejs.org/" && exit 1)
+	@echo "✅ npm found"
+	@npm --version
+	@cargo install cargo-workspaces --force
 	@echo "✅ Development tools ready"
 
 # =============================================================================
@@ -103,89 +107,62 @@ install-local:
 
 FIXTURES_DIR = tests/fixtures
 
-# Clean all fixtures
-.PHONY: clean-fixtures
-clean-fixtures:
-	rm -rf $(FIXTURES_DIR)
+.PHONY: fixtures.clean
+fixtures.clean:
+	@rm -rf $(FIXTURES_DIR)
 
-# Single crate fixture
-$(FIXTURES_DIR)/single-crate/Cargo.toml:
-	@echo "Creating single-crate fixture..."
-	mkdir -p $(FIXTURES_DIR)
-	cd $(FIXTURES_DIR) && cargo new single-crate
-	@echo "✅ single-crate fixture ready"
+.PHONY: fixtures.dir
+fixtures.dir:
+	@mkdir -p $(FIXTURES_DIR)
 
-# Simple workspace fixture  
-$(FIXTURES_DIR)/workspace-simple/Cargo.toml:
-	@echo "Creating workspace-simple base..."
-	mkdir -p $(FIXTURES_DIR)
-	cd $(FIXTURES_DIR) && cargo new --name workspace-simple workspace-simple
+.PHONY: fixtures
+fixtures: fixtures.node fixtures.rust
 
-$(FIXTURES_DIR)/workspace-simple/lib1/Cargo.toml: $(FIXTURES_DIR)/workspace-simple/Cargo.toml
-	@echo "Adding lib1 to workspace-simple..."
-	cd $(FIXTURES_DIR)/workspace-simple && cargo new --lib lib1
+.PHONY: fixtures.node
+fixtures.node:
+	$(MAKE) fixtures.node.basic-node-workspace
 
-$(FIXTURES_DIR)/workspace-simple/lib2/Cargo.toml: $(FIXTURES_DIR)/workspace-simple/Cargo.toml
-	@echo "Adding lib2 to workspace-simple..."
-	cd $(FIXTURES_DIR)/workspace-simple && cargo new --lib lib2
+.PHONY: fixtures.rust
+fixtures.rust:
+	$(MAKE) fixtures.rust.basic-rust-workspace
 
-$(FIXTURES_DIR)/workspace-simple/.configured: $(FIXTURES_DIR)/workspace-simple/lib1/Cargo.toml $(FIXTURES_DIR)/workspace-simple/lib2/Cargo.toml
-	@echo "Configuring workspace-simple..."
-	echo '' >> $(FIXTURES_DIR)/workspace-simple/Cargo.toml
-	echo '[workspace]' >> $(FIXTURES_DIR)/workspace-simple/Cargo.toml  
-	echo 'members = ["lib1", "lib2"]' >> $(FIXTURES_DIR)/workspace-simple/Cargo.toml
-	touch $(FIXTURES_DIR)/workspace-simple/.configured
-	@echo "✅ workspace-simple fixture ready"
+.PHONY: fixtures.rust.basic-rust-workspace
+fixtures.rust.basic-rust-workspace: fixtures.dir
+	@rm -fr $(FIXTURES_DIR)/basic-rust-workspace && mkdir -p $(FIXTURES_DIR)/basic-rust-workspace
+	@cargo new --vcs none --frozen --bin $(FIXTURES_DIR)/basic-rust-workspace/bin1
+	@cargo new --vcs none --frozen --bin $(FIXTURES_DIR)/basic-rust-workspace/bin2
+	@cargo new --vcs none --frozen --lib $(FIXTURES_DIR)/basic-rust-workspace/lib1
+	@cargo new --vcs none --frozen --lib $(FIXTURES_DIR)/basic-rust-workspace/lib2
+	@cargo workspaces init $(FIXTURES_DIR)/basic-rust-workspace
 
-# Workspace with inheritance fixture
-$(FIXTURES_DIR)/workspace-inheritance/Cargo.toml:
-	@echo "Creating workspace-inheritance base..."
-	mkdir -p $(FIXTURES_DIR)
-	cd $(FIXTURES_DIR) && cargo new --name workspace-root workspace-inheritance
-
-$(FIXTURES_DIR)/workspace-inheritance/member1/Cargo.toml: $(FIXTURES_DIR)/workspace-inheritance/Cargo.toml
-	@echo "Adding member1 to workspace-inheritance..."
-	cd $(FIXTURES_DIR)/workspace-inheritance && cargo new --lib member1
-
-$(FIXTURES_DIR)/workspace-inheritance/member2/Cargo.toml: $(FIXTURES_DIR)/workspace-inheritance/Cargo.toml
-	@echo "Adding member2 to workspace-inheritance..."
-	cd $(FIXTURES_DIR)/workspace-inheritance && cargo new --lib member2
-
-$(FIXTURES_DIR)/workspace-inheritance/.configured: $(FIXTURES_DIR)/workspace-inheritance/member1/Cargo.toml $(FIXTURES_DIR)/workspace-inheritance/member2/Cargo.toml
-	@echo "Configuring workspace-inheritance..."
-	# Add workspace section to root
-	echo '' >> $(FIXTURES_DIR)/workspace-inheritance/Cargo.toml
-	echo '[workspace]' >> $(FIXTURES_DIR)/workspace-inheritance/Cargo.toml
-	echo 'members = ["member1", "member2"]' >> $(FIXTURES_DIR)/workspace-inheritance/Cargo.toml
-	# Configure member1 to use workspace inheritance
-	perl -i -pe 's/version = "0.1.0"/version = { workspace = true }/' $(FIXTURES_DIR)/workspace-inheritance/member1/Cargo.toml
-	# member2 keeps its own version for testing mixed scenarios
-	touch $(FIXTURES_DIR)/workspace-inheritance/.configured
-	@echo "✅ workspace-inheritance fixture ready"
-
-# High-level fixture targets
-.PHONY: single-crate workspace-simple workspace-inheritance fixtures
-single-crate: $(FIXTURES_DIR)/single-crate/Cargo.toml
-workspace-simple: $(FIXTURES_DIR)/workspace-simple/.configured  
-workspace-inheritance: $(FIXTURES_DIR)/workspace-inheritance/.configured
-fixtures: single-crate workspace-simple workspace-inheritance
+.PHONY: fixtures.node.basic-node-workspace
+.PHONY: fixtures.node.basic-node-workspace
+fixtures.node.basic-node-workspace: fixtures.dir
+	@rm -fr $(FIXTURES_DIR)/basic-node-workspace && mkdir -p $(FIXTURES_DIR)/basic-node-workspace
+	@cd $(FIXTURES_DIR)/basic-node-workspace && npm init -y
+	@mkdir -p $(FIXTURES_DIR)/basic-node-workspace/bin1 $(FIXTURES_DIR)/basic-node-workspace/bin2 $(FIXTURES_DIR)/basic-node-workspace/lib1 $(FIXTURES_DIR)/basic-node-workspace/lib2
+	@cd $(FIXTURES_DIR)/basic-node-workspace/bin1 && npm init -y
+	@cd $(FIXTURES_DIR)/basic-node-workspace/bin2 && npm init -y
+	@cd $(FIXTURES_DIR)/basic-node-workspace/lib1 && npm init -y
+	@cd $(FIXTURES_DIR)/basic-node-workspace/lib2 && npm init -y
+	@cd $(FIXTURES_DIR)/basic-node-workspace && jq '.workspaces = ["bin1", "bin2", "lib1", "lib2"]' package.json > package.json.tmp && mv package.json.tmp package.json
 
 # =============================================================================
 # Testing
 # =============================================================================
 
 .PHONY: test
-test:
+test: build
 	@echo "Running unit tests (no fixtures)..."
 	cargo test --lib
 
 .PHONY: test-integration
-test-integration: build clean-fixtures fixtures
+test-integration: build fixtures.clean fixtures.dir
 	@echo "Running integration tests with fresh fixtures..."
-	ODO_BINARY=$(shell pwd)/target/debug/odo cargo test --features fixture-tests
+	cargo test --features fixture-tests
 
 .PHONY: test-all  
-test-all: test test-integration
+test-all: build test test-integration
 
 # =============================================================================
 # Code Quality
@@ -219,7 +196,7 @@ build:
 	cargo build --bin odo
 
 .PHONY: clean
-clean: clean-fixtures
+clean: fixtures.clean
 	cargo clean
 
 # Default target
@@ -254,9 +231,7 @@ help:
 	@echo ""
 	@echo "Fixtures:"
 	@echo "  make fixtures         Generate all test fixtures"
-	@echo "  make single-crate     Generate single-crate fixture"
-	@echo "  make workspace-simple Generate simple workspace fixture"
-	@echo "  make clean-fixtures   Remove all fixtures"
+	@echo "  make fixtures.clean   Remove all fixtures"
 	@echo ""
 	@echo "Development:"
 	@echo "  make check            Check code without building"

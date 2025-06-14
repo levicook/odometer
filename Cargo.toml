@@ -35,10 +35,15 @@ path = "src/bin/odo.rs"
 [dependencies]
 anyhow = "1.0.98"
 clap = { version = "4.5", features = ["derive"] }
+json-patch = "4.0.0"
 semver = "1.0.26"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml_edit = "0.22.27"
+walkdir = "2.5.0"
 
 [features]
 fixture-tests = []
+
+[dev-dependencies]
+tempfile = "3.20.0"

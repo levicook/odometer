@@ -12,6 +12,13 @@ pub enum VersionBump {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum VersionField {
+    Absent,
+    Concrete(String),
+    Inherited,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct PackageSelection {
     pub packages: Vec<String>,
     pub workspace: bool,
@@ -49,65 +56,59 @@ impl OperationResult {
     }
 }
 
+/// A workspace member, which can be a Rust package or a Node.js package
 #[derive(Debug, Clone)]
 pub enum WorkspaceMember {
     Cargo {
         name: String,
-        version: String,
         path: PathBuf,
-        has_workspace_inheritance: bool,
+        version: VersionField,
     },
-    // Node {
-    //     name: String,
-    //     version: String,
-    //     path: PathBuf,
-    //     // private: bool,
-    //     // workspaces: Option<Vec<String>>,
-    // },
-    // Python {
-    //     name: String,
-    //     version: String,
-    //     path: PathBuf,
-    //     // is_pyproject_toml: bool,
-    // },
+    Node {
+        name: String,
+        path: PathBuf,
+        version: VersionField,
+    },
 }
 
 impl WorkspaceMember {
+    /// Get the name of the package
     pub fn name(&self) -> &str {
         match self {
             WorkspaceMember::Cargo { name, .. } => name,
-            // WorkspaceMember::Node { name, .. } => name,
-            // WorkspaceMember::Python { name, .. } => name,
+            WorkspaceMember::Node { name, .. } => name,
         }
     }
 
-    pub fn version(&self) -> &str {
-        match self {
-            WorkspaceMember::Cargo { version, .. } => version,
-            // WorkspaceMember::Node { version, .. } => version,
-            // WorkspaceMember::Python { version, .. } => version,
-        }
-    }
-
-    pub fn set_version(&mut self, new_version: &str) {
-        match self {
-            WorkspaceMember::Cargo { version, .. } => *version = new_version.to_string(),
-            // WorkspaceMember::Node { version, .. } => *version = new_version.to_string(),
-            // WorkspaceMember::Python { version, .. } => *version = new_version.to_string(),
-        }
-    }
-
+    /// Get the path to the package
     pub fn path(&self) -> &PathBuf {
         match self {
             WorkspaceMember::Cargo { path, .. } => path,
-            // WorkspaceMember::Node { path, .. } => path,
-            // WorkspaceMember::Python { path, .. } => path,
+            WorkspaceMember::Node { path, .. } => path,
+        }
+    }
+
+    /// Get the version of the package
+    pub fn version(&self) -> &VersionField {
+        match self {
+            WorkspaceMember::Cargo { version, .. } => version,
+            WorkspaceMember::Node { version, .. } => version,
+        }
+    }
+
+    /// Set the version of the package
+    pub fn set_version(&mut self, new_version: VersionField) {
+        match self {
+            WorkspaceMember::Cargo { version, .. } => *version = new_version,
+            WorkspaceMember::Node { version, .. } => *version = new_version,
         }
     }
 }
 
-#[derive(Debug)]
+/// A workspace, which is a collection of packages
+#[derive(Debug, Clone)]
 pub struct Workspace {
+    /// The members of the workspace
     pub members: Vec<WorkspaceMember>,
 }
 
@@ -129,7 +130,12 @@ impl Workspace {
         let indices = self.select_member_indices(selection)?;
         for &index in &indices {
             let member = &mut self.members[index];
-            let old_version = member.version().to_string();
+
+            let old_version = match member.version() {
+                VersionField::Concrete(version) => version.clone(),
+                _ => continue,
+            };
+
             let new_version = bump.apply_to_version(&old_version)?;
 
             if old_version != new_version {
@@ -140,9 +146,10 @@ impl Workspace {
                     path: member.path().clone(),
                 });
 
-                member.set_version(&new_version);
+                member.set_version(VersionField::Concrete(new_version));
             }
         }
+
         Ok(result)
     }
 
@@ -154,9 +161,14 @@ impl Workspace {
         let mut result = OperationResult::new(format!("set {}", version));
 
         let indices = self.select_member_indices(selection)?;
+
         for &index in &indices {
             let member = &mut self.members[index];
-            let old_version = member.version().to_string();
+
+            let old_version = match member.version() {
+                VersionField::Concrete(version) => version.clone(),
+                _ => continue,
+            };
 
             if old_version != version {
                 result.add_change(VersionChange {
@@ -166,9 +178,10 @@ impl Workspace {
                     path: member.path().clone(),
                 });
 
-                member.set_version(version);
+                member.set_version(VersionField::Concrete(version.to_string()));
             }
         }
+
         Ok(result)
     }
 
@@ -176,7 +189,10 @@ impl Workspace {
         let mut result = OperationResult::new(format!("sync {}", version));
 
         for member in &mut self.members {
-            let old_version = member.version().to_string();
+            let old_version = match member.version() {
+                VersionField::Concrete(version) => version.clone(),
+                _ => continue,
+            };
 
             if old_version != version {
                 result.add_change(VersionChange {
@@ -186,7 +202,7 @@ impl Workspace {
                     path: member.path().clone(),
                 });
 
-                member.set_version(version);
+                member.set_version(VersionField::Concrete(version.to_string()));
             }
         }
         Ok(result)
@@ -195,7 +211,12 @@ impl Workspace {
     pub fn show(&self, selection: &PackageSelection) -> String {
         let mut output = String::new();
         for member in self.selected_members(selection) {
-            output.push_str(&format!("{} {}\n", member.name(), member.version()));
+            let version = match member.version() {
+                VersionField::Concrete(version) => version.clone(),
+                _ => continue,
+            };
+
+            output.push_str(&format!("{}: {}\n", member.name(), version));
         }
         output
     }
@@ -203,10 +224,15 @@ impl Workspace {
     pub fn lint(&self, selection: &PackageSelection) -> Vec<LintError> {
         let mut errors = Vec::new();
         for member in self.selected_members(selection) {
-            if let Err(e) = semver::Version::parse(member.version()) {
+            let version = match member.version() {
+                VersionField::Concrete(version) => version.clone(),
+                _ => continue,
+            };
+
+            if let Err(e) = semver::Version::parse(&version) {
                 errors.push(LintError {
                     member: member.name().to_string(),
-                    message: format!("Invalid version '{}': {}", member.version(), e),
+                    message: format!("Invalid version '{}': {}", version, e),
                 });
             }
         }
@@ -214,17 +240,23 @@ impl Workspace {
     }
 
     pub fn selected_members(&self, selection: &PackageSelection) -> Vec<&WorkspaceMember> {
-        match self.select_member_indices(selection) {
+        let members: Vec<&WorkspaceMember> = match self.select_member_indices(selection) {
             Ok(indices) => indices.iter().map(|&i| &self.members[i]).collect(),
             Err(_) => self.members.iter().collect(), // fallback to all members
-        }
+        };
+        let mut sorted = members;
+        sorted.sort_by(|a, b| a.name().cmp(b.name()));
+        sorted
     }
 
     fn select_member_indices(&self, selection: &PackageSelection) -> anyhow::Result<Vec<usize>> {
         if !selection.packages.is_empty() {
-            // Select specific packages
+            // Select specific packages, excluding any in the exclude list
             let mut indices = Vec::new();
             for package_name in &selection.packages {
+                if selection.exclude.iter().any(|e| e == package_name) {
+                    continue;
+                }
                 match self.members.iter().position(|m| m.name() == *package_name) {
                     Some(index) => indices.push(index),
                     None => anyhow::bail!("Package '{}' not found in workspace", package_name),
@@ -242,8 +274,15 @@ impl Workspace {
                 .collect())
         } else {
             // Default: select the first member (root package in single crate, or workspace root)
+            // but only if it's not excluded
             if self.members.is_empty() {
                 anyhow::bail!("No packages found in workspace")
+            } else if selection
+                .exclude
+                .iter()
+                .any(|e| e == self.members[0].name())
+            {
+                Ok(vec![])
             } else {
                 Ok(vec![0])
             }
@@ -348,16 +387,15 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    fn create_test_member(name: &str, version: &str) -> WorkspaceMember {
+    fn create_test_member(name: &str, version: VersionField) -> WorkspaceMember {
         WorkspaceMember::Cargo {
             name: name.to_string(),
-            version: version.to_string(),
             path: PathBuf::from(format!("{}/Cargo.toml", name)),
-            has_workspace_inheritance: false,
+            version,
         }
     }
 
-    fn create_test_workspace(members: Vec<(&str, &str)>) -> Workspace {
+    fn create_test_workspace(members: Vec<(&str, VersionField)>) -> Workspace {
         Workspace {
             members: members
                 .into_iter()
@@ -455,18 +493,28 @@ mod tests {
 
     #[test]
     fn test_workspace_member_methods() {
-        let mut member = create_test_member("test-crate", "1.0.0");
+        let mut member =
+            create_test_member("test-crate", VersionField::Concrete("1.0.0".to_string()));
 
         assert_eq!(member.name(), "test-crate");
-        assert_eq!(member.version(), "1.0.0");
+        assert_eq!(
+            member.version(),
+            &VersionField::Concrete("1.0.0".to_string())
+        );
 
-        member.set_version("2.0.0");
-        assert_eq!(member.version(), "2.0.0");
+        member.set_version(VersionField::Concrete("2.0.0".to_string()));
+        assert_eq!(
+            member.version(),
+            &VersionField::Concrete("2.0.0".to_string())
+        );
     }
 
     #[test]
     fn test_workspace_roll_version_default() {
-        let mut workspace = create_test_workspace(vec![("app", "1.0.0"), ("lib", "0.5.0")]);
+        let mut workspace = create_test_workspace(vec![
+            ("app", VersionField::Concrete("1.0.0".to_string())),
+            ("lib", VersionField::Concrete("0.5.0".to_string())),
+        ]);
 
         // Default selection (first member only)
         let selection = PackageSelection::root_only();
@@ -474,44 +522,80 @@ mod tests {
             .roll_version(VersionBump::Patch(1), &selection)
             .unwrap();
 
-        assert_eq!(workspace.members[0].version(), "1.0.1"); // app bumped
-        assert_eq!(workspace.members[1].version(), "0.5.0"); // lib unchanged
+        assert_eq!(
+            workspace.members[0].version(),
+            &VersionField::Concrete("1.0.1".to_string())
+        ); // app bumped
+        assert_eq!(
+            workspace.members[1].version(),
+            &VersionField::Concrete("0.5.0".to_string())
+        ); // lib unchanged
     }
 
     #[test]
     fn test_workspace_roll_version_specific_packages() {
-        let mut workspace =
-            create_test_workspace(vec![("app", "1.0.0"), ("lib", "0.5.0"), ("utils", "0.1.0")]);
+        let mut workspace = create_test_workspace(vec![
+            ("app", VersionField::Concrete("1.0.0".to_string())),
+            ("lib", VersionField::Concrete("0.5.0".to_string())),
+            ("utils", VersionField::Concrete("0.1.0".to_string())),
+        ]);
 
         let selection = PackageSelection::packages(vec!["lib".to_string(), "utils".to_string()]);
+
         workspace
             .roll_version(VersionBump::Minor(1), &selection)
             .unwrap();
 
-        assert_eq!(workspace.members[0].version(), "1.0.0"); // app unchanged
-        assert_eq!(workspace.members[1].version(), "0.6.0"); // lib bumped
-        assert_eq!(workspace.members[2].version(), "0.2.0"); // utils bumped
+        assert_eq!(
+            workspace.members[0].version(),
+            &VersionField::Concrete("1.0.0".to_string())
+        ); // app unchanged
+        assert_eq!(
+            workspace.members[1].version(),
+            &VersionField::Concrete("0.6.0".to_string())
+        ); // lib bumped
+        assert_eq!(
+            workspace.members[2].version(),
+            &VersionField::Concrete("0.2.0".to_string())
+        ); // utils bumped
     }
 
     #[test]
     fn test_workspace_roll_version_workspace() {
-        let mut workspace =
-            create_test_workspace(vec![("app", "1.0.0"), ("lib", "0.5.0"), ("utils", "0.1.0")]);
+        let mut workspace = create_test_workspace(vec![
+            ("app", VersionField::Concrete("1.0.0".to_string())),
+            ("lib", VersionField::Concrete("0.5.0".to_string())),
+            ("utils", VersionField::Concrete("0.1.0".to_string())),
+        ]);
 
         let selection = PackageSelection::workspace();
         workspace
             .roll_version(VersionBump::Patch(1), &selection)
             .unwrap();
 
-        assert_eq!(workspace.members[0].version(), "1.0.1"); // app bumped
-        assert_eq!(workspace.members[1].version(), "0.5.1"); // lib bumped
-        assert_eq!(workspace.members[2].version(), "0.1.1"); // utils bumped
+        assert_eq!(
+            workspace.members[0].version(),
+            &VersionField::Concrete("1.0.1".to_string())
+        ); // app bumped
+
+        assert_eq!(
+            workspace.members[1].version(),
+            &VersionField::Concrete("0.5.1".to_string())
+        ); // lib bumped
+
+        assert_eq!(
+            workspace.members[2].version(),
+            &VersionField::Concrete("0.1.1".to_string())
+        ); // utils bumped
     }
 
     #[test]
     fn test_workspace_roll_version_workspace_with_exclude() {
-        let mut workspace =
-            create_test_workspace(vec![("app", "1.0.0"), ("lib", "0.5.0"), ("utils", "0.1.0")]);
+        let mut workspace = create_test_workspace(vec![
+            ("app", VersionField::Concrete("1.0.0".to_string())),
+            ("lib", VersionField::Concrete("0.5.0".to_string())),
+            ("utils", VersionField::Concrete("0.1.0".to_string())),
+        ]);
 
         let selection = PackageSelection {
             packages: vec![],
@@ -523,45 +607,85 @@ mod tests {
             .roll_version(VersionBump::Patch(1), &selection)
             .unwrap();
 
-        assert_eq!(workspace.members[0].version(), "1.0.1"); // app bumped
-        assert_eq!(workspace.members[1].version(), "0.5.0"); // lib excluded
-        assert_eq!(workspace.members[2].version(), "0.1.1"); // utils bumped
+        assert_eq!(
+            workspace.members[0].version(),
+            &VersionField::Concrete("1.0.1".to_string())
+        ); // app bumped
+        assert_eq!(
+            workspace.members[1].version(),
+            &VersionField::Concrete("0.5.0".to_string())
+        ); // lib excluded
+
+        assert_eq!(
+            workspace.members[2].version(),
+            &VersionField::Concrete("0.1.1".to_string())
+        ); // utils bumped
     }
 
     #[test]
     fn test_workspace_set_version() {
-        let mut workspace = create_test_workspace(vec![("app", "1.0.0"), ("lib", "0.5.0")]);
+        let mut workspace = create_test_workspace(vec![
+            ("app", VersionField::Concrete("1.0.0".to_string())),
+            ("lib", VersionField::Concrete("0.5.0".to_string())),
+        ]);
 
         let selection = PackageSelection::packages(vec!["lib".to_string()]);
         workspace.set_version("2.0.0", &selection).unwrap();
 
-        assert_eq!(workspace.members[0].version(), "1.0.0"); // app unchanged
-        assert_eq!(workspace.members[1].version(), "2.0.0"); // lib set
+        assert_eq!(
+            workspace.members[0].version(),
+            &VersionField::Concrete("1.0.0".to_string())
+        ); // app unchanged
+
+        assert_eq!(
+            workspace.members[1].version(),
+            &VersionField::Concrete("2.0.0".to_string())
+        ); // lib set
     }
 
     #[test]
     fn test_workspace_sync_version() {
-        let mut workspace =
-            create_test_workspace(vec![("app", "1.0.0"), ("lib", "0.5.0"), ("utils", "2.1.0")]);
+        let mut workspace = create_test_workspace(vec![
+            ("app", VersionField::Concrete("1.0.0".to_string())),
+            ("lib", VersionField::Concrete("0.5.0".to_string())),
+            ("utils", VersionField::Concrete("2.1.0".to_string())),
+        ]);
 
         workspace.sync_version("1.5.0").unwrap();
 
-        assert_eq!(workspace.members[0].version(), "1.5.0");
-        assert_eq!(workspace.members[1].version(), "1.5.0");
-        assert_eq!(workspace.members[2].version(), "1.5.0");
+        assert_eq!(
+            workspace.members[0].version(),
+            &VersionField::Concrete("1.5.0".to_string())
+        );
+
+        assert_eq!(
+            workspace.members[1].version(),
+            &VersionField::Concrete("1.5.0".to_string())
+        );
+
+        assert_eq!(
+            workspace.members[2].version(),
+            &VersionField::Concrete("1.5.0".to_string())
+        );
     }
 
     #[test]
     fn test_workspace_show() {
-        let workspace = create_test_workspace(vec![("app", "1.0.0"), ("lib", "0.5.0")]);
+        let workspace = create_test_workspace(vec![
+            ("app", VersionField::Concrete("1.0.0".to_string())),
+            ("lib", VersionField::Concrete("0.5.0".to_string())),
+        ]);
 
         let output = workspace.show(&PackageSelection::workspace());
-        assert_eq!(output, "app 1.0.0\nlib 0.5.0\n");
+        assert_eq!(output, "app: 1.0.0\nlib: 0.5.0\n");
     }
 
     #[test]
     fn test_workspace_lint_valid() {
-        let workspace = create_test_workspace(vec![("app", "1.0.0"), ("lib", "0.5.0")]);
+        let workspace = create_test_workspace(vec![
+            ("app", VersionField::Concrete("1.0.0".to_string())),
+            ("lib", VersionField::Concrete("0.5.0".to_string())),
+        ]);
 
         let errors = workspace.lint(&PackageSelection::root_only());
         assert!(errors.is_empty());
@@ -569,7 +693,10 @@ mod tests {
 
     #[test]
     fn test_workspace_lint_invalid() {
-        let workspace = create_test_workspace(vec![("app", "1.0.0"), ("lib", "invalid-version")]);
+        let workspace = create_test_workspace(vec![
+            ("app", VersionField::Concrete("1.0.0".to_string())),
+            ("lib", VersionField::Concrete("invalid-version".to_string())),
+        ]);
 
         let errors = workspace.lint(&PackageSelection::workspace());
         assert_eq!(errors.len(), 1);
@@ -581,7 +708,8 @@ mod tests {
 
     #[test]
     fn test_package_selection_not_found() {
-        let mut workspace = create_test_workspace(vec![("app", "1.0.0")]);
+        let mut workspace =
+            create_test_workspace(vec![("app", VersionField::Concrete("1.0.0".to_string()))]);
 
         let selection = PackageSelection::packages(vec!["nonexistent".to_string()]);
         let result = workspace.roll_version(VersionBump::Patch(1), &selection);
@@ -596,7 +724,10 @@ mod tests {
     #[test]
     fn test_workspace_roll_version_invalid_operation() {
         // Test what happens when a roll operation would result in invalid versions
-        let mut workspace = create_test_workspace(vec![("app", "0.1.0"), ("lib", "0.1.0")]);
+        let mut workspace = create_test_workspace(vec![
+            ("app", VersionField::Concrete("0.1.0".to_string())),
+            ("lib", VersionField::Concrete("0.1.0".to_string())),
+        ]);
 
         let selection = PackageSelection::workspace();
         let result = workspace.roll_version(VersionBump::Patch(-2), &selection);
@@ -609,8 +740,15 @@ mod tests {
             .contains("Cannot decrement patch version by 2 from 0.1.0"));
 
         // Versions should remain unchanged
-        assert_eq!(workspace.members[0].version(), "0.1.0");
-        assert_eq!(workspace.members[1].version(), "0.1.0");
+        assert_eq!(
+            workspace.members[0].version(),
+            &VersionField::Concrete("0.1.0".to_string())
+        );
+
+        assert_eq!(
+            workspace.members[1].version(),
+            &VersionField::Concrete("0.1.0".to_string())
+        );
     }
 
     #[test]
@@ -665,9 +803,9 @@ mod tests {
     fn test_workspace_roll_version_mixed_validity() {
         // Test workspace with mixed versions where some can handle rollback and others can't
         let mut workspace = create_test_workspace(vec![
-            ("app", "1.0.2"),   // Can handle patch -2
-            ("lib", "0.1.0"),   // Cannot handle patch -2 (will cause error)
-            ("utils", "2.5.3"), // Can handle patch -2
+            ("app", VersionField::Concrete("1.0.2".to_string())), // Can handle patch -2
+            ("lib", VersionField::Concrete("0.1.0".to_string())), // Cannot handle patch -2 (will cause error)
+            ("utils", VersionField::Concrete("2.5.3".to_string())), // Can handle patch -2
         ]);
 
         let selection = PackageSelection::workspace();
@@ -685,9 +823,23 @@ mod tests {
         // so from the user's perspective, no changes occur to disk
         //
         // However, this test is only exercising domain logic, so we see the in-memory changes:
-        assert_eq!(workspace.members[0].version(), "1.0.0"); // app was modified in-memory
-        assert_eq!(workspace.members[1].version(), "0.1.0"); // lib unchanged (caused error)
-        assert_eq!(workspace.members[2].version(), "2.5.3"); // utils unchanged (not processed)
+        assert_eq!(
+            workspace.members[0].version(),
+            &VersionField::Concrete("1.0.0".to_string()),
+            "app was modified in-memory"
+        );
+
+        assert_eq!(
+            workspace.members[1].version(),
+            &VersionField::Concrete("0.1.0".to_string()),
+            "lib unchanged (caused error)"
+        );
+
+        assert_eq!(
+            workspace.members[2].version(),
+            &VersionField::Concrete("2.5.3".to_string()),
+            "utils unchanged (not processed)"
+        );
     }
 
     #[test]
@@ -725,5 +877,175 @@ mod tests {
         // Test major rollback with pre-release (resets minor and patch to 0, preserves pre-release)
         let bump = VersionBump::Major(-1);
         assert_eq!(bump.apply_to_version("2.3.5-rc.1").unwrap(), "1.0.0-rc.1");
+    }
+
+    #[test]
+    fn test_selected_members_sorting() {
+        let workspace = create_test_workspace(vec![
+            ("zebra", VersionField::Concrete("1.0.0".to_string())),
+            ("apple", VersionField::Concrete("2.0.0".to_string())),
+            ("banana", VersionField::Concrete("3.0.0".to_string())),
+        ]);
+
+        let members = workspace.selected_members(&PackageSelection::workspace());
+        assert_eq!(members[0].name(), "apple");
+        assert_eq!(members[1].name(), "banana");
+        assert_eq!(members[2].name(), "zebra");
+    }
+
+    #[test]
+    fn test_selected_members_sorting_with_selection() {
+        let workspace = create_test_workspace(vec![
+            ("zebra", VersionField::Concrete("1.0.0".to_string())),
+            ("apple", VersionField::Concrete("2.0.0".to_string())),
+            ("banana", VersionField::Concrete("3.0.0".to_string())),
+        ]);
+
+        let selection = PackageSelection::packages(vec!["zebra".to_string(), "apple".to_string()]);
+        let members = workspace.selected_members(&selection);
+        assert_eq!(members[0].name(), "apple");
+        assert_eq!(members[1].name(), "zebra");
+    }
+
+    #[test]
+    fn test_version_bump_with_build_metadata() {
+        let bump = VersionBump::Patch(1);
+        let result = bump.apply_to_version("1.2.3+20130313144700").unwrap();
+        assert_eq!(result, "1.2.4+20130313144700");
+    }
+
+    #[test]
+    fn test_version_bump_with_prerelease_and_build() {
+        let bump = VersionBump::Patch(1);
+        let result = bump
+            .apply_to_version("1.2.3-beta.1+20130313144700")
+            .unwrap();
+        assert_eq!(result, "1.2.4-beta.1+20130313144700");
+    }
+
+    #[test]
+    fn test_version_bump_zero_amount() {
+        let bump = VersionBump::Patch(0);
+        let result = bump.apply_to_version("1.2.3").unwrap();
+        assert_eq!(result, "1.2.3");
+    }
+
+    #[test]
+    fn test_workspace_roll_version_preserves_inherited() {
+        let mut workspace = create_test_workspace(vec![
+            ("pkg1", VersionField::Concrete("1.0.0".to_string())),
+            ("pkg2", VersionField::Inherited),
+        ]);
+        let selection = PackageSelection::workspace();
+        let result = workspace
+            .roll_version(VersionBump::Patch(1), &selection)
+            .unwrap();
+        assert_eq!(result.changes.len(), 1);
+        assert_eq!(result.changes[0].package, "pkg1");
+        assert_eq!(result.changes[0].new_version, "1.0.1");
+    }
+
+    #[test]
+    fn test_workspace_set_version_preserves_inherited() {
+        let mut workspace = create_test_workspace(vec![
+            ("pkg1", VersionField::Concrete("1.0.0".to_string())),
+            ("pkg2", VersionField::Inherited),
+        ]);
+        let selection = PackageSelection::workspace();
+        let result = workspace.set_version("2.0.0", &selection).unwrap();
+        assert_eq!(result.changes.len(), 1);
+        assert_eq!(result.changes[0].package, "pkg1");
+        assert_eq!(result.changes[0].new_version, "2.0.0");
+    }
+
+    #[test]
+    fn test_workspace_sync_version_preserves_inherited() {
+        let mut workspace = create_test_workspace(vec![
+            ("pkg1", VersionField::Concrete("1.0.0".to_string())),
+            ("pkg2", VersionField::Inherited),
+            ("pkg3", VersionField::Concrete("2.0.0".to_string())),
+        ]);
+        let result = workspace.sync_version("3.0.0").unwrap();
+        assert_eq!(result.changes.len(), 2);
+        assert!(result
+            .changes
+            .iter()
+            .any(|c| c.package == "pkg1" && c.new_version == "3.0.0"));
+        assert!(result
+            .changes
+            .iter()
+            .any(|c| c.package == "pkg3" && c.new_version == "3.0.0"));
+    }
+
+    #[test]
+    fn test_workspace_show_includes_inherited() {
+        let workspace = create_test_workspace(vec![
+            ("pkg1", VersionField::Concrete("1.0.0".to_string())),
+            ("pkg2", VersionField::Inherited),
+        ]);
+        let selection = PackageSelection::workspace();
+        let output = workspace.show(&selection);
+        assert!(output.contains("pkg1: 1.0.0"));
+        assert!(!output.contains("pkg2")); // Inherited versions are skipped
+    }
+
+    #[test]
+    fn test_workspace_lint_skips_inherited() {
+        let workspace = create_test_workspace(vec![
+            ("pkg1", VersionField::Concrete("1.0.0".to_string())),
+            ("pkg2", VersionField::Inherited),
+            ("pkg3", VersionField::Concrete("invalid".to_string())),
+        ]);
+        let selection = PackageSelection::workspace();
+        let errors = workspace.lint(&selection);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].member, "pkg3");
+    }
+
+    #[test]
+    fn test_package_selection_exclude_all() {
+        let workspace = create_test_workspace(vec![
+            ("pkg1", VersionField::Concrete("1.0.0".to_string())),
+            ("pkg2", VersionField::Concrete("2.0.0".to_string())),
+            ("pkg3", VersionField::Concrete("3.0.0".to_string())),
+        ]);
+        let selection = PackageSelection {
+            packages: vec![],
+            workspace: false,
+            exclude: vec!["pkg1".to_string(), "pkg2".to_string(), "pkg3".to_string()],
+        };
+        let members = workspace.selected_members(&selection);
+        assert!(members.is_empty());
+    }
+
+    #[test]
+    fn test_package_selection_include_and_exclude() {
+        let workspace = create_test_workspace(vec![
+            ("pkg1", VersionField::Concrete("1.0.0".to_string())),
+            ("pkg2", VersionField::Concrete("2.0.0".to_string())),
+            ("pkg3", VersionField::Concrete("3.0.0".to_string())),
+        ]);
+        let selection = PackageSelection {
+            packages: vec!["pkg1".to_string(), "pkg2".to_string()],
+            workspace: false,
+            exclude: vec!["pkg2".to_string()],
+        };
+        let members = workspace.selected_members(&selection);
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].name(), "pkg1");
+    }
+
+    #[test]
+    fn test_operation_result_has_changes() {
+        let mut result = OperationResult::new("test".to_string());
+        assert!(!result.has_changes());
+
+        result.add_change(VersionChange {
+            package: "pkg1".to_string(),
+            old_version: "1.0.0".to_string(),
+            new_version: "2.0.0".to_string(),
+            path: PathBuf::from("pkg1"),
+        });
+        assert!(result.has_changes());
     }
 }
