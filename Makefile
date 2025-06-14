@@ -50,8 +50,8 @@ ci-local: ci
 release-validation:
 	@echo "🚀 Running release validation..."
 	@echo "Verifying tag matches Cargo.toml version..."
-	@if [ -n "$$TAG_VERSION" ] && [ -n "$$(grep '^version = ' Cargo.toml | sed 's/version = \"(.*)\"/\\1/')" ]; then \
-		CARGO_VERSION=$$(grep '^version = ' Cargo.toml | sed 's/version = \"(.*)\"/\\1/'); \
+	@if [ -n "$$TAG_VERSION" ] && [ -n "$$(grep '^version = ' Cargo.toml | sed 's/version = \"\(.*\)\"/\1/')" ]; then \
+		CARGO_VERSION=$$(grep '^version = ' Cargo.toml | sed 's/version = \"\(.*\)\"/\1/'); \
 		if [ "$$TAG_VERSION" != "$$CARGO_VERSION" ]; then \
 			echo "❌ Tag version $$TAG_VERSION doesn't match Cargo.toml version $$CARGO_VERSION"; \
 			exit 1; \
