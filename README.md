@@ -9,8 +9,8 @@ A workspace version management tool that keeps package versions synchronized acr
 
 Odometer provides intuitive commands to manage versions across project workspaces, with precise control over which packages get updated. Whether you need lockstep versioning for coordinated releases or independent versioning for different packages, odometer has you covered.
 
-**Currently supports:** Rust/Cargo workspaces  
-**Planned support:** Node.js/npm, Python/pip, and other package ecosystems
+**Currently supports:** Rust/Cargo workspaces and Node.js/npm workspaces  
+**Planned support:** Python/pip and other package ecosystems
 
 ### Key Features
 
@@ -18,7 +18,7 @@ Odometer provides intuitive commands to manage versions across project workspace
 - 🔄 **Flexible Version Strategies** - Independent versioning or lockstep synchronization
 - 🛡️ **Safe Defaults** - Operations target workspace root only unless explicitly specified
 - 📊 **Clear Inspection** - See current versions and validate version fields
-- 🏗️ **Workspace Inheritance Support** - Handles `version = { workspace = true }` correctly (Cargo)
+- 🏗️ **Workspace Inheritance Support** - Handles `version = { workspace = true }` (Cargo) and `workspace:*` (Node.js)
 - ⚡ **Fast & Reliable** - Written in Rust with comprehensive test coverage
 
 ## Installation
@@ -207,11 +207,54 @@ odo show                    # Confirm all at 2.0.0
 
 Odometer properly handles:
 
-- **Workspace roots** with `[workspace]` sections
-- **Member crates** in subdirectories
-- **Workspace inheritance** (`version = { workspace = true }`)
-- **Mixed scenarios** (some crates inherit, others don't)
-- **Single crate projects** (no workspace)
+- **Workspace roots** with `[workspace]` sections (Cargo) or `workspaces` field (Node.js)
+- **Member packages** in subdirectories
+- **Workspace inheritance**:
+  - Cargo: `version = { workspace = true }`
+  - Node.js: `"version": "workspace:*"` or `"version": "workspace:~"`
+- **Mixed scenarios** (some packages inherit, others don't)
+- **Single package projects** (no workspace)
+- **Mixed ecosystems** (Rust and Node.js packages in the same workspace)
+
+### Node.js Workspace Example
+
+```bash
+# Initialize a Node.js workspace
+mkdir my-workspace && cd my-workspace
+npm init -y
+# Add workspaces to package.json
+echo '{"workspaces": ["packages/*"]}' > package.json
+
+# Create some packages
+mkdir -p packages/pkg1 packages/pkg2
+cd packages/pkg1 && npm init -y
+cd ../pkg2 && npm init -y
+
+# Now use odometer to manage versions
+odo show                    # See all package versions
+odo roll --workspace patch  # Bump all packages
+odo sync 1.0.0             # Set all to same version
+```
+
+### Rust Workspace Example
+
+```bash
+# Initialize a Rust workspace
+cargo init --lib
+# Add workspace configuration to Cargo.toml
+echo '[workspace]
+members = ["packages/*"]' >> Cargo.toml
+
+# Create some crates
+mkdir -p packages/crate1 packages/crate2
+cd packages/crate1 && cargo init --lib
+cd ../crate2 && cargo init --lib
+
+# Now use odometer to manage versions
+odo show                    # See all crate versions
+odo roll --workspace patch  # Bump all crates
+odo sync 1.0.0             # Set all to same version
+```
 
 ## Development
 
