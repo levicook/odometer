@@ -3,8 +3,8 @@ mod package_json;
 
 use crate::domain::{Workspace, WorkspaceMember};
 use anyhow::{Context, Result};
+use ignore::WalkBuilder;
 use std::path::Path;
-use walkdir::WalkDir;
 
 /// Load the current workspace from the file system
 ///
@@ -51,8 +51,24 @@ where
     }
 
     let mut members = Vec::new();
-    for entry in WalkDir::new(root).into_iter().filter_map(Result::ok) {
+
+    // Use WalkBuilder to respect .gitignore files
+    for result in WalkBuilder::new(root)
+        .hidden(false) // Don't ignore hidden files by default
+        .git_ignore(true) // Respect .gitignore files
+        .git_global(true) // Respect global git ignore
+        .git_exclude(true) // Respect .git/info/exclude
+        .build()
+    {
+        let entry = result.with_context(|| "Failed to walk directory tree")?;
         let path = entry.path();
+
+        // Skip directories - we only care about files
+        if entry.file_type().is_some_and(|ft| ft.is_dir()) {
+            continue;
+        }
+
+        // Apply custom ignore filter
         if ignore(path) {
             continue;
         }
