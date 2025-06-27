@@ -158,11 +158,11 @@ $ odo lint
 
 Odometer uses cargo-style package selection for precise control:
 
-| Flag              | Description                         | Example                                     |
-| ----------------- | ----------------------------------- | ------------------------------------------- |
-| _(default)_       | Workspace root only                 | `odo roll patch`                            |
-| `-p, --package`   | Specific package(s)                 | `odo roll patch -p lib1`                    |
-| `-w, --workspace` | All workspace members               | `odo roll --workspace patch`                |
+| Flag              | Description           | Example                      |
+| ----------------- | --------------------- | ---------------------------- |
+| _(default)_       | Workspace root only   | `odo roll patch`             |
+| `-p, --package`   | Specific package(s)   | `odo roll patch -p lib1`     |
+| `-w, --workspace` | All workspace members | `odo roll --workspace patch` |
 
 ## File and Directory Filtering
 
@@ -171,7 +171,7 @@ Odometer respects standard ignore patterns when discovering workspace members. B
 ### Default Behavior
 
 - ✅ **Hidden files ignored** - Files/directories starting with `.` are skipped
-- ✅ **`.gitignore` respected** - Standard git ignore patterns are followed  
+- ✅ **`.gitignore` respected** - Standard git ignore patterns are followed
 - ✅ **`.ignore` respected** - ripgrep/ag format ignore files are supported
 - ✅ **Global git ignore** - `~/.config/git/ignore` patterns are applied
 - ✅ **Local git exclude** - `.git/info/exclude` patterns are applied
@@ -180,13 +180,13 @@ Odometer respects standard ignore patterns when discovering workspace members. B
 
 Control exactly what gets ignored with these flags:
 
-| Flag                  | Description                               | Example                                |
-| --------------------- | ----------------------------------------- | -------------------------------------- |
-| `--hidden`            | Include hidden files/directories         | `odo show --hidden`                    |
-| `--no-ignore`         | Don't respect `.ignore` files            | `odo show --no-ignore`                 |
-| `--no-ignore-git`     | Don't respect `.gitignore` files         | `odo show --no-ignore-git`             |
-| `--no-ignore-global`  | Don't respect global git ignore          | `odo show --no-ignore-global`          |
-| `--no-ignore-all`     | Disable all ignore filtering              | `odo show --no-ignore-all`             |
+| Flag                 | Description                      | Example                       |
+| -------------------- | -------------------------------- | ----------------------------- |
+| `--hidden`           | Include hidden files/directories | `odo show --hidden`           |
+| `--no-ignore`        | Don't respect `.ignore` files    | `odo show --no-ignore`        |
+| `--no-ignore-git`    | Don't respect `.gitignore` files | `odo show --no-ignore-git`    |
+| `--no-ignore-global` | Don't respect global git ignore  | `odo show --no-ignore-global` |
+| `--no-ignore-all`    | Disable all ignore filtering     | `odo show --no-ignore-all`    |
 
 ### Common Use Cases
 
@@ -197,7 +197,7 @@ odo show --hidden
 # Debug: see everything odometer can find
 odo show --no-ignore-all
 
-# Ignore git patterns but respect custom .ignore files  
+# Ignore git patterns but respect custom .ignore files
 odo sync 1.0.0 --no-ignore-git
 
 # Work in a non-git directory with custom ignore patterns
@@ -209,10 +209,11 @@ odo lint --no-ignore-git --no-ignore-global
 Odometer supports these ignore files in order of precedence:
 
 1. **`.ignore`** - ripgrep/ag format (highest precedence)
-2. **`.gitignore`** - git format  
+2. **`.gitignore`** - git format
 3. **Global git ignore** - `~/.config/git/ignore` (lowest precedence)
 
 Example `.ignore` file:
+
 ```
 # Ignore build artifacts
 target/

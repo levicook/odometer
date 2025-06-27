@@ -89,21 +89,29 @@ pub fn update_version(path: &Path, new_version: &VersionField) -> Result<()> {
 
 /// Get the package section from either workspace.package or package
 fn get_package_section(doc: &DocumentMut) -> Option<&Item> {
-    if doc.get("workspace").is_some() {
-        doc.get("workspace").and_then(|w| w.get("package"))
+    // Try workspace.package first (virtual workspace)
+    if let Some(pkg) = doc.get("workspace").and_then(|w| w.get("package")) {
+        Some(pkg)
     } else {
+        // Fall back to regular package (including root package in workspace)
         doc.get("package")
     }
 }
 
 /// Get a mutable reference to the package section from either workspace.package or package
 fn get_package_section_mut(doc: &mut DocumentMut) -> Option<&mut Item> {
-    if doc.get("workspace").is_some() {
+    // Check if workspace.package exists first (without mutable borrow)
+    let has_workspace_package = doc
+        .get("workspace")
+        .and_then(|w| w.get("package"))
+        .is_some();
+
+    if has_workspace_package {
+        // Try workspace.package first (virtual workspace)
         doc.get_mut("workspace").and_then(|w| w.get_mut("package"))
-    } else if doc.get("package").is_some() {
-        doc.get_mut("package")
     } else {
-        None
+        // Fall back to regular package (including root package in workspace)
+        doc.get_mut("package")
     }
 }
 
@@ -482,5 +490,130 @@ description = "A test package"
         let (name, version) = parse(file.path()).unwrap();
         assert_eq!(name, Some("my-package".to_string()));
         assert_eq!(version, VersionField::Concrete("not-a-version".to_string()));
+    }
+
+    // Bug reproduction tests - mixed workspace with root package
+    #[test]
+    fn test_parse_mixed_workspace_with_root_package() {
+        // This reproduces the elf-magic bug: workspace with members but also a root package
+        let toml = r#"
+            [workspace]
+            members = [".", "ecosystem/*"]
+            
+            [package]
+            name = "elf-magic"
+            version = "0.3.1"
+        "#;
+        let file = write_temp_toml(toml);
+        let (name, version) = parse(file.path()).unwrap();
+
+        // Currently FAILS: returns (None, Absent) because get_package_section only looks for workspace.package
+        // Should PASS: return ("elf-magic", "0.3.1") because there's a [package] section
+        assert_eq!(name, Some("elf-magic".to_string()));
+        assert_eq!(version, VersionField::Concrete("0.3.1".to_string()));
+    }
+
+    #[test]
+    fn test_update_mixed_workspace_with_root_package() {
+        // Test that update_version works for mixed workspace + root package
+        let toml = r#"
+            [workspace]
+            members = [".", "ecosystem/*"]
+            
+            [package]
+            name = "elf-magic"
+            version = "0.3.1"
+        "#;
+        let file = write_temp_toml(toml);
+        let new_version = VersionField::Concrete("0.4.0".to_string());
+
+        // First verify we can parse (this should fail with current code)
+        let (name, version) = parse(file.path()).unwrap();
+        println!("Parsed: name={:?}, version={:?}", name, version);
+
+        // This should also fail because get_package_section_mut should return None
+        update_version(file.path(), &new_version).unwrap();
+        let content = fs::read_to_string(file.path()).unwrap();
+        println!("Updated content: {}", content);
+        assert!(content.contains("version = \"0.4.0\""));
+    }
+
+    // Regression tests - ensure our fix doesn't break existing behavior
+    #[test]
+    fn test_virtual_workspace_precedence_over_package() {
+        // When both [workspace.package] AND [package] exist, workspace.package should win
+        let toml = r#"
+            [workspace.package]
+            name = "workspace-pkg"
+            version = "2.0.0"
+            
+            [workspace]
+            members = ["crate1"]
+            
+            [package]
+            name = "regular-pkg"
+            version = "1.0.0"
+        "#;
+        let file = write_temp_toml(toml);
+        let (name, version) = parse(file.path()).unwrap();
+
+        // Should prioritize workspace.package over package
+        assert_eq!(name, Some("workspace-pkg".to_string()));
+        assert_eq!(version, VersionField::Concrete("2.0.0".to_string()));
+    }
+
+    #[test]
+    fn test_virtual_workspace_update_precedence() {
+        // Ensure update_version targets workspace.package when both sections exist
+        let toml = r#"
+            [workspace.package]
+            name = "workspace-pkg"
+            version = "2.0.0"
+            
+            [workspace]
+            members = ["crate1"]
+            
+            [package]
+            name = "regular-pkg"
+            version = "1.0.0"
+        "#;
+        let file = write_temp_toml(toml);
+        let new_version = VersionField::Concrete("3.0.0".to_string());
+
+        update_version(file.path(), &new_version).unwrap();
+        let content = fs::read_to_string(file.path()).unwrap();
+
+        // Should update workspace.package, not package
+        assert!(content.contains("[workspace.package]"));
+        assert!(content.contains("workspace-pkg"));
+        assert!(content.contains("version = \"3.0.0\""));
+        // Package section should remain unchanged
+        assert!(content.contains("version = \"1.0.0\""));
+    }
+
+    #[test]
+    fn test_regular_package_still_works() {
+        // Ensure regular packages (no workspace) still work correctly
+        let toml = r#"
+            [package]
+            name = "simple-pkg"
+            version = "1.5.0"
+            
+            [dependencies]
+            serde = "1.0"
+        "#;
+        let file = write_temp_toml(toml);
+
+        // Parse should work
+        let (name, version) = parse(file.path()).unwrap();
+        assert_eq!(name, Some("simple-pkg".to_string()));
+        assert_eq!(version, VersionField::Concrete("1.5.0".to_string()));
+
+        // Update should work
+        let new_version = VersionField::Concrete("1.6.0".to_string());
+        update_version(file.path(), &new_version).unwrap();
+        let content = fs::read_to_string(file.path()).unwrap();
+        assert!(content.contains("version = \"1.6.0\""));
+        assert!(content.contains("simple-pkg"));
     }
 }
