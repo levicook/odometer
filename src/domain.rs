@@ -19,10 +19,13 @@ pub enum VersionField {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct PackageSelection {
-    pub packages: Vec<String>,
-    pub workspace: bool,
-    pub exclude: Vec<String>,
+pub enum PackageSelection {
+    /// Select specific packages by name
+    Specific(Vec<String>),
+    /// Select all workspace members
+    Workspace,
+    /// Default selection (first member)
+    Default,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -208,9 +211,14 @@ impl Workspace {
         Ok(result)
     }
 
-    pub fn show(&self, selection: &PackageSelection) -> String {
+    pub fn show(&self, selection: &PackageSelection) -> anyhow::Result<String> {
+        let indices = self.select_member_indices(selection)?;
+        let mut members: Vec<&WorkspaceMember> =
+            indices.iter().map(|&i| &self.members[i]).collect();
+        members.sort_by(|a, b| a.name().cmp(b.name()));
+
         let mut output = String::new();
-        for member in self.selected_members(selection) {
+        for member in members {
             let version = match member.version() {
                 VersionField::Concrete(version) => version.clone(),
                 _ => continue,
@@ -218,12 +226,17 @@ impl Workspace {
 
             output.push_str(&format!("{}: {}\n", member.name(), version));
         }
-        output
+        Ok(output)
     }
 
-    pub fn lint(&self, selection: &PackageSelection) -> Vec<LintError> {
+    pub fn lint(&self, selection: &PackageSelection) -> anyhow::Result<Vec<LintError>> {
+        let indices = self.select_member_indices(selection)?;
+        let mut members: Vec<&WorkspaceMember> =
+            indices.iter().map(|&i| &self.members[i]).collect();
+        members.sort_by(|a, b| a.name().cmp(b.name()));
+
         let mut errors = Vec::new();
-        for member in self.selected_members(selection) {
+        for member in members {
             let version = match member.version() {
                 VersionField::Concrete(version) => version.clone(),
                 _ => continue,
@@ -236,55 +249,42 @@ impl Workspace {
                 });
             }
         }
-        errors
+        Ok(errors)
     }
 
+    // Keep this for tests but handle errors properly in production code
+    #[cfg(test)]
     pub fn selected_members(&self, selection: &PackageSelection) -> Vec<&WorkspaceMember> {
-        let members: Vec<&WorkspaceMember> = match self.select_member_indices(selection) {
-            Ok(indices) => indices.iter().map(|&i| &self.members[i]).collect(),
-            Err(_) => self.members.iter().collect(), // fallback to all members
-        };
-        let mut sorted = members;
-        sorted.sort_by(|a, b| a.name().cmp(b.name()));
-        sorted
+        match self.select_member_indices(selection) {
+            Ok(indices) => {
+                let mut members: Vec<&WorkspaceMember> =
+                    indices.iter().map(|&i| &self.members[i]).collect();
+                members.sort_by(|a, b| a.name().cmp(b.name()));
+                members
+            }
+            Err(_) => vec![], // Return empty on error for tests
+        }
     }
 
     fn select_member_indices(&self, selection: &PackageSelection) -> anyhow::Result<Vec<usize>> {
-        if !selection.packages.is_empty() {
-            // Select specific packages, excluding any in the exclude list
-            let mut indices = Vec::new();
-            for package_name in &selection.packages {
-                if selection.exclude.iter().any(|e| e == package_name) {
-                    continue;
+        match selection {
+            PackageSelection::Specific(packages) => {
+                let mut indices = Vec::new();
+                for package_name in packages {
+                    match self.members.iter().position(|m| m.name() == *package_name) {
+                        Some(index) => indices.push(index),
+                        None => anyhow::bail!("Package '{}' not found in workspace", package_name),
+                    }
                 }
-                match self.members.iter().position(|m| m.name() == *package_name) {
-                    Some(index) => indices.push(index),
-                    None => anyhow::bail!("Package '{}' not found in workspace", package_name),
-                }
+                Ok(indices)
             }
-            Ok(indices)
-        } else if selection.workspace {
-            // Select all workspace members, excluding any in the exclude list
-            Ok(self
-                .members
-                .iter()
-                .enumerate()
-                .filter(|(_, m)| !selection.exclude.iter().any(|e| e == m.name()))
-                .map(|(i, _)| i)
-                .collect())
-        } else {
-            // Default: select the first member (root package in single crate, or workspace root)
-            // but only if it's not excluded
-            if self.members.is_empty() {
-                anyhow::bail!("No packages found in workspace")
-            } else if selection
-                .exclude
-                .iter()
-                .any(|e| e == self.members[0].name())
-            {
-                Ok(vec![])
-            } else {
-                Ok(vec![0])
+            PackageSelection::Workspace => Ok((0..self.members.len()).collect()),
+            PackageSelection::Default => {
+                if self.members.is_empty() {
+                    anyhow::bail!("No packages found in workspace")
+                } else {
+                    Ok(vec![0])
+                }
             }
         }
     }
@@ -356,29 +356,17 @@ impl VersionBump {
 impl PackageSelection {
     #[cfg(test)]
     pub fn workspace() -> Self {
-        Self {
-            packages: vec![],
-            workspace: true,
-            exclude: vec![],
-        }
+        Self::Workspace
     }
 
     #[cfg(test)]
     pub fn root_only() -> Self {
-        Self {
-            packages: vec![],
-            workspace: false,
-            exclude: vec![],
-        }
+        Self::Default
     }
 
     #[cfg(test)]
     pub fn packages(packages: Vec<String>) -> Self {
-        Self {
-            packages,
-            workspace: false,
-            exclude: vec![],
-        }
+        Self::Specific(packages)
     }
 }
 
@@ -597,11 +585,7 @@ mod tests {
             ("utils", VersionField::Concrete("0.1.0".to_string())),
         ]);
 
-        let selection = PackageSelection {
-            packages: vec![],
-            workspace: true,
-            exclude: vec!["lib".to_string()],
-        };
+        let selection = PackageSelection::Workspace;
 
         workspace
             .roll_version(VersionBump::Patch(1), &selection)
@@ -613,8 +597,8 @@ mod tests {
         ); // app bumped
         assert_eq!(
             workspace.members[1].version(),
-            &VersionField::Concrete("0.5.0".to_string())
-        ); // lib excluded
+            &VersionField::Concrete("0.5.1".to_string())
+        ); // lib bumped (no longer excluded)
 
         assert_eq!(
             workspace.members[2].version(),
@@ -676,7 +660,7 @@ mod tests {
             ("lib", VersionField::Concrete("0.5.0".to_string())),
         ]);
 
-        let output = workspace.show(&PackageSelection::workspace());
+        let output = workspace.show(&PackageSelection::workspace()).unwrap();
         assert_eq!(output, "app: 1.0.0\nlib: 0.5.0\n");
     }
 
@@ -687,7 +671,7 @@ mod tests {
             ("lib", VersionField::Concrete("0.5.0".to_string())),
         ]);
 
-        let errors = workspace.lint(&PackageSelection::root_only());
+        let errors = workspace.lint(&PackageSelection::root_only()).unwrap();
         assert!(errors.is_empty());
     }
 
@@ -698,7 +682,7 @@ mod tests {
             ("lib", VersionField::Concrete("invalid-version".to_string())),
         ]);
 
-        let errors = workspace.lint(&PackageSelection::workspace());
+        let errors = workspace.lint(&PackageSelection::workspace()).unwrap();
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].member, "lib");
         assert!(errors[0]
@@ -984,7 +968,7 @@ mod tests {
             ("pkg2", VersionField::Inherited),
         ]);
         let selection = PackageSelection::workspace();
-        let output = workspace.show(&selection);
+        let output = workspace.show(&selection).unwrap();
         assert!(output.contains("pkg1: 1.0.0"));
         assert!(!output.contains("pkg2")); // Inherited versions are skipped
     }
@@ -997,42 +981,36 @@ mod tests {
             ("pkg3", VersionField::Concrete("invalid".to_string())),
         ]);
         let selection = PackageSelection::workspace();
-        let errors = workspace.lint(&selection);
+        let errors = workspace.lint(&selection).unwrap();
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].member, "pkg3");
     }
 
     #[test]
-    fn test_package_selection_exclude_all() {
+    fn test_package_selection_default_selects_first() {
         let workspace = create_test_workspace(vec![
             ("pkg1", VersionField::Concrete("1.0.0".to_string())),
             ("pkg2", VersionField::Concrete("2.0.0".to_string())),
             ("pkg3", VersionField::Concrete("3.0.0".to_string())),
         ]);
-        let selection = PackageSelection {
-            packages: vec![],
-            workspace: false,
-            exclude: vec!["pkg1".to_string(), "pkg2".to_string(), "pkg3".to_string()],
-        };
-        let members = workspace.selected_members(&selection);
-        assert!(members.is_empty());
-    }
-
-    #[test]
-    fn test_package_selection_include_and_exclude() {
-        let workspace = create_test_workspace(vec![
-            ("pkg1", VersionField::Concrete("1.0.0".to_string())),
-            ("pkg2", VersionField::Concrete("2.0.0".to_string())),
-            ("pkg3", VersionField::Concrete("3.0.0".to_string())),
-        ]);
-        let selection = PackageSelection {
-            packages: vec!["pkg1".to_string(), "pkg2".to_string()],
-            workspace: false,
-            exclude: vec!["pkg2".to_string()],
-        };
+        let selection = PackageSelection::root_only();
         let members = workspace.selected_members(&selection);
         assert_eq!(members.len(), 1);
         assert_eq!(members[0].name(), "pkg1");
+    }
+
+    #[test]
+    fn test_package_selection_specific_packages() {
+        let workspace = create_test_workspace(vec![
+            ("pkg1", VersionField::Concrete("1.0.0".to_string())),
+            ("pkg2", VersionField::Concrete("2.0.0".to_string())),
+            ("pkg3", VersionField::Concrete("3.0.0".to_string())),
+        ]);
+        let selection = PackageSelection::packages(vec!["pkg1".to_string(), "pkg2".to_string()]);
+        let members = workspace.selected_members(&selection);
+        assert_eq!(members.len(), 2);
+        assert_eq!(members[0].name(), "pkg1");
+        assert_eq!(members[1].name(), "pkg2");
     }
 
     #[test]

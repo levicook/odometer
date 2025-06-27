@@ -10,17 +10,28 @@ pub fn run() {
 
     let result = match cli.command {
         Commands::Roll { bump_type } => {
-            let (bump, selection, format) = bump_type.into();
-            handle_roll(bump, selection, format)
+            let (bump, selection, ignore_options, format) = bump_type.into();
+            handle_roll(bump, selection, format, &ignore_options)
         }
         Commands::Set {
             version,
             package_selection,
+            ignore_options,
             format,
-        } => handle_set(version, package_selection.into(), format),
-        Commands::Sync { version, format } => handle_sync(version, format),
-        Commands::Show { package_selection } => handle_show(package_selection.into()),
-        Commands::Lint { package_selection } => handle_lint(package_selection.into()),
+        } => handle_set(version, package_selection.into(), format, &ignore_options),
+        Commands::Sync {
+            version,
+            ignore_options,
+            format,
+        } => handle_sync(version, format, &ignore_options),
+        Commands::Show {
+            package_selection,
+            ignore_options,
+        } => handle_show(package_selection.into(), &ignore_options),
+        Commands::Lint {
+            package_selection,
+            ignore_options,
+        } => handle_lint(package_selection.into(), &ignore_options),
     };
 
     if let Err(e) = result {
@@ -50,8 +61,9 @@ fn handle_roll(
     bump: domain::VersionBump,
     selection: domain::PackageSelection,
     format: OutputFormat,
+    ignore_options: &cli::IgnoreOptions,
 ) -> anyhow::Result<()> {
-    let mut workspace = io::load_workspace()?;
+    let mut workspace = io::load_workspace(ignore_options)?;
     let result = workspace.roll_version(bump, &selection)?;
     io::save_workspace(&workspace)?;
 
@@ -63,8 +75,9 @@ fn handle_set(
     version: String,
     selection: domain::PackageSelection,
     format: OutputFormat,
+    ignore_options: &cli::IgnoreOptions,
 ) -> anyhow::Result<()> {
-    let mut workspace = io::load_workspace()?;
+    let mut workspace = io::load_workspace(ignore_options)?;
     let result = workspace.set_version(&version, &selection)?;
     io::save_workspace(&workspace)?;
 
@@ -72,8 +85,12 @@ fn handle_set(
     Ok(())
 }
 
-fn handle_sync(version: String, format: OutputFormat) -> anyhow::Result<()> {
-    let mut workspace = io::load_workspace()?;
+fn handle_sync(
+    version: String,
+    format: OutputFormat,
+    ignore_options: &cli::IgnoreOptions,
+) -> anyhow::Result<()> {
+    let mut workspace = io::load_workspace(ignore_options)?;
     let result = workspace.sync_version(&version)?;
     io::save_workspace(&workspace)?;
 
@@ -81,39 +98,36 @@ fn handle_sync(version: String, format: OutputFormat) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn handle_show(selection: domain::PackageSelection) -> anyhow::Result<()> {
-    let workspace = io::load_workspace()?;
+fn handle_show(
+    selection: domain::PackageSelection,
+    ignore_options: &cli::IgnoreOptions,
+) -> anyhow::Result<()> {
+    let workspace = io::load_workspace(ignore_options)?;
 
     // If no specific selection is made, show all members
-    let effective_selection = if selection.packages.is_empty() && !selection.workspace {
-        domain::PackageSelection {
-            packages: vec![],
-            workspace: true,
-            exclude: selection.exclude,
-        }
-    } else {
-        selection
+    let effective_selection = match selection {
+        domain::PackageSelection::Default => domain::PackageSelection::Workspace,
+        _ => selection,
     };
 
-    println!("{}", workspace.show(&effective_selection));
+    let output = workspace.show(&effective_selection)?;
+    print!("{}", output);
     Ok(())
 }
 
-fn handle_lint(selection: domain::PackageSelection) -> anyhow::Result<()> {
-    let workspace = io::load_workspace()?;
+fn handle_lint(
+    selection: domain::PackageSelection,
+    ignore_options: &cli::IgnoreOptions,
+) -> anyhow::Result<()> {
+    let workspace = io::load_workspace(ignore_options)?;
 
     // If no specific selection is made, lint all members
-    let effective_selection = if selection.packages.is_empty() && !selection.workspace {
-        domain::PackageSelection {
-            packages: vec![],
-            workspace: true,
-            exclude: selection.exclude,
-        }
-    } else {
-        selection
+    let effective_selection = match selection {
+        domain::PackageSelection::Default => domain::PackageSelection::Workspace,
+        _ => selection,
     };
 
-    let errors = workspace.lint(&effective_selection);
+    let errors = workspace.lint(&effective_selection)?;
 
     if errors.is_empty() {
         println!("✅ All workspace versions are valid");

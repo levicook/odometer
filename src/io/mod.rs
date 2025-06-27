@@ -1,6 +1,7 @@
-mod cargo_toml;
-mod package_json;
+pub mod cargo_toml;
+pub mod package_json;
 
+use crate::cli::IgnoreOptions;
 use crate::domain::{Workspace, WorkspaceMember};
 use anyhow::{Context, Result};
 use ignore::WalkBuilder;
@@ -10,13 +11,10 @@ use std::path::Path;
 ///
 /// This function discovers members from all supported ecosystems
 /// and builds a composite workspace.
-pub fn load_workspace() -> Result<Workspace> {
-    let current_dir = std::env::current_dir().context("Failed to get current directory")?;
-    let members = discover_members(&current_dir, |_| false)?;
+pub fn load_workspace(ignore_options: &IgnoreOptions) -> Result<Workspace> {
+    let current_dir = std::env::current_dir().with_context(|| "Failed to get current directory")?;
 
-    if members.is_empty() {
-        anyhow::bail!("No supported package manifests found in current directory");
-    }
+    let members = discover_members(&current_dir, ignore_options)?;
 
     Ok(Workspace { members })
 }
@@ -39,10 +37,10 @@ pub fn save_workspace(workspace: &Workspace) -> Result<()> {
     Ok(())
 }
 
-pub fn discover_members<F>(root: &Path, ignore: F) -> Result<Vec<WorkspaceMember>>
-where
-    F: Fn(&Path) -> bool,
-{
+pub fn discover_members(
+    root: &Path,
+    ignore_options: &IgnoreOptions,
+) -> Result<Vec<WorkspaceMember>> {
     if !root.exists() {
         return Err(anyhow::anyhow!(
             "Root path does not exist: {}",
@@ -52,24 +50,32 @@ where
 
     let mut members = Vec::new();
 
-    // Use WalkBuilder to respect .gitignore files
-    for result in WalkBuilder::new(root)
-        .hidden(false) // Don't ignore hidden files by default
-        .git_ignore(true) // Respect .gitignore files
-        .git_global(true) // Respect global git ignore
-        .git_exclude(true) // Respect .git/info/exclude
-        .build()
-    {
+    // Configure WalkBuilder based on ignore options
+    let mut walker = WalkBuilder::new(root);
+
+    // Apply ignore settings - defaults follow standards (hide hidden files, respect ignore files)
+    if ignore_options.no_ignore_all {
+        // Disable all filtering
+        walker
+            .hidden(false)
+            .ignore(false)
+            .git_ignore(false)
+            .git_global(false);
+    } else {
+        // Standard behavior with selective overrides
+        walker
+            .hidden(!ignore_options.hidden) // Hidden files ignored by default (standard)
+            .ignore(!ignore_options.no_ignore) // .ignore files enabled by default (standard)
+            .git_ignore(!ignore_options.no_ignore_git) // .gitignore enabled by default
+            .git_global(!ignore_options.no_ignore_global); // Global git ignore enabled by default
+    }
+
+    for result in walker.build() {
         let entry = result.with_context(|| "Failed to walk directory tree")?;
         let path = entry.path();
 
         // Skip directories - we only care about files
         if entry.file_type().is_some_and(|ft| ft.is_dir()) {
-            continue;
-        }
-
-        // Apply custom ignore filter
-        if ignore(path) {
             continue;
         }
 
@@ -143,30 +149,42 @@ version = "1.0.0"
 "#,
         );
 
-        let members = discover_members(dir.path(), |_| false).unwrap();
+        let members = discover_members(dir.path(), &IgnoreOptions::default()).unwrap();
         assert_eq!(members.len(), 2);
         assert!(members.iter().any(|m| m.name() == "rustpkg"));
         assert!(members.iter().any(|m| m.name() == "nodepkg"));
     }
 
     #[test]
-    fn test_discover_members_with_filter() {
+    fn test_discover_members_ignore_options() {
         let dir = tempdir().unwrap();
-        let skip_dir = dir.path().join("skipme");
-        fs::create_dir(&skip_dir).unwrap();
+        let hidden_dir = dir.path().join(".hidden");
+        fs::create_dir(&hidden_dir).unwrap();
         write_file(
-            &skip_dir.join("Cargo.toml"),
-            r#"[package]\nname = \"skip\"\nversion = \"0.1.0\"\n"#,
+            &hidden_dir.join("Cargo.toml"),
+            r#"[package]
+name = "hidden-pkg"
+version = "0.1.0"
+"#,
         );
-        let members =
-            discover_members(dir.path(), |p| p.to_string_lossy().contains("skipme")).unwrap();
-        assert!(members.iter().all(|m| m.name() != "skip"));
+
+        // By default, hidden files should be ignored
+        let members_default = discover_members(dir.path(), &IgnoreOptions::default()).unwrap();
+        assert!(members_default.iter().all(|m| m.name() != "hidden-pkg"));
+
+        // With --hidden flag, hidden files should be included
+        let options = IgnoreOptions {
+            hidden: true,
+            ..Default::default()
+        };
+        let members_with_hidden = discover_members(dir.path(), &options).unwrap();
+        assert!(members_with_hidden.iter().any(|m| m.name() == "hidden-pkg"));
     }
 
     #[test]
     fn test_discover_members_empty_ok() {
         let dir = tempdir().unwrap();
-        let members = discover_members(dir.path(), |_| false).unwrap();
+        let members = discover_members(dir.path(), &IgnoreOptions::default()).unwrap();
         assert!(members.is_empty());
     }
 
@@ -176,7 +194,7 @@ version = "1.0.0"
         let bad = dir.path().join("bad");
         fs::create_dir(&bad).unwrap();
         write_file(&bad.join("Cargo.toml"), "not toml");
-        let result = discover_members(dir.path(), |_| false);
+        let result = discover_members(dir.path(), &IgnoreOptions::default());
         assert!(result.is_err());
     }
 
@@ -191,7 +209,7 @@ version = "1.0.0"
             "[package]\nversion = \"1.0.0\"",
         );
 
-        let members = discover_members(dir.path(), |_| false).unwrap();
+        let members = discover_members(dir.path(), &IgnoreOptions::default()).unwrap();
         assert_eq!(members[0].name(), "my-rust-package");
     }
 
@@ -206,7 +224,7 @@ version = "1.0.0"
             "[package]\nname = \"pkg\"\nversion = { workspace = true }",
         );
 
-        let members = discover_members(dir.path(), |_| false).unwrap();
+        let members = discover_members(dir.path(), &IgnoreOptions::default()).unwrap();
         if let WorkspaceMember::Cargo { version, .. } = &members[0] {
             assert!(matches!(version, VersionField::Inherited));
         }
@@ -223,7 +241,7 @@ version = "1.0.0"
             "[package]\nname = \"nested\"\nversion = \"1.0.0\"",
         );
 
-        let members = discover_members(dir.path(), |_| false).unwrap();
+        let members = discover_members(dir.path(), &IgnoreOptions::default()).unwrap();
         assert_eq!(members.len(), 1);
         assert_eq!(members[0].name(), "nested");
     }
@@ -254,7 +272,7 @@ version = "1.0.0"
 "#,
         );
 
-        let members = discover_members(dir.path(), |_| false).unwrap();
+        let members = discover_members(dir.path(), &IgnoreOptions::default()).unwrap();
         assert_eq!(members.len(), 2);
         assert!(members.iter().any(|m| m.name() == "rust-pkg"));
         assert!(members.iter().any(|m| m.name() == "node-pkg"));
@@ -263,7 +281,7 @@ version = "1.0.0"
     #[test]
     fn test_discover_members_invalid_path() {
         // Test handling of invalid path structure
-        let result = discover_members(Path::new("/nonexistent/path"), |_| false);
+        let result = discover_members(Path::new("/nonexistent/path"), &IgnoreOptions::default());
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -292,7 +310,7 @@ version = "1.0.0"
 "#,
         );
 
-        let members = discover_members(dir.path(), |_| false).unwrap();
+        let members = discover_members(dir.path(), &IgnoreOptions::default()).unwrap();
         assert_eq!(members.len(), 1);
         assert_eq!(members[0].name(), "symlinked");
     }
@@ -321,7 +339,7 @@ version = "2.0.0"
 "#,
         );
 
-        let members = discover_members(dir.path(), |_| false).unwrap();
+        let members = discover_members(dir.path(), &IgnoreOptions::default()).unwrap();
         assert_eq!(members.len(), 2);
         assert!(members.iter().all(|m| m.name() == "duplicate"));
     }
@@ -340,7 +358,7 @@ version = "1.0.0"
 "#,
         );
 
-        let members = discover_members(dir.path(), |_| false).unwrap();
+        let members = discover_members(dir.path(), &IgnoreOptions::default()).unwrap();
         assert_eq!(members.len(), 0); // Should not find uppercase Cargo.toml
     }
 
@@ -352,7 +370,7 @@ version = "1.0.0"
         fs::create_dir(&pkg_dir).unwrap();
         write_file(&pkg_dir.join("Cargo.toml"), "");
 
-        let members = discover_members(dir.path(), |_| false).unwrap();
+        let members = discover_members(dir.path(), &IgnoreOptions::default()).unwrap();
         assert_eq!(members.len(), 1);
         if let WorkspaceMember::Cargo { name, version, .. } = &members[0] {
             assert_eq!(name, "pkg");
@@ -384,7 +402,7 @@ version = "2.0.0"
 "#,
         );
 
-        let members = discover_members(dir.path(), |_| false).unwrap();
+        let members = discover_members(dir.path(), &IgnoreOptions::default()).unwrap();
         assert_eq!(members.len(), 2);
         assert_eq!(members[0].name(), "a-pkg");
         assert_eq!(members[1].name(), "z-pkg");
